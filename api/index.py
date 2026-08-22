@@ -5,9 +5,12 @@ import shutil
 
 # Ensure backend package is on Python sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-backend_dir = os.path.join(current_dir, "..", "backend")
-if os.path.exists(backend_dir):
-    sys.path.insert(0, os.path.abspath(backend_dir))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+backend_dir = os.path.join(root_dir, "backend")
+
+for path in [backend_dir, root_dir, current_dir]:
+    if path not in sys.path and os.path.exists(path):
+        sys.path.insert(0, path)
 
 # On Vercel, copy pre-seeded SQLite database to /tmp if using SQLite
 if os.environ.get("VERCEL"):

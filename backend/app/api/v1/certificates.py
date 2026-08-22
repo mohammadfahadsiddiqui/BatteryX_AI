@@ -1,0 +1,148 @@
+"""BatteryX AI – Certificate API routes"""
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.db.models import Battery, Certificate, SOHPrediction, RULPrediction, RiskAssessment, SecondLifeAssessment, AuditLog, User
+from app.models.schemas import CertificateResponse, VerifyResponse
+from app.api.deps import get_current_user
+from app.services.certificate.generator import generate_certificate_id, generate_certificate_pdf, generate_qr_code
+
+router = APIRouter(prefix="/certificates", tags=["Certificates"])
+
+
+@router.post("/{battery_id}", response_model=CertificateResponse, status_code=201)
+def generate_certificate(
+    battery_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    battery = db.query(Battery).filter(Battery.battery_id == battery_id).first()
+    if not battery:
+        battery = db.query(Battery).filter(Battery.id == battery_id).first()
+    if not battery:
+        raise HTTPException(status_code=404, detail="Battery not found")
+
+    soh = db.query(SOHPrediction).filter(SOHPrediction.battery_id == battery.id).order_by(SOHPrediction.created_at.desc()).first()
+    rul = db.query(RULPrediction).filter(RULPrediction.battery_id == battery.id).order_by(RULPrediction.created_at.desc()).first()
+    risk = db.query(RiskAssessment).filter(RiskAssessment.battery_id == battery.id).order_by(RiskAssessment.created_at.desc()).first()
+    sl = db.query(SecondLifeAssessment).filter(SecondLifeAssessment.battery_id == battery.id).order_by(SecondLifeAssessment.created_at.desc()).first()
+
+    if not soh or not rul or not risk or not sl:
+        raise HTTPException(status_code=400, detail="Run a battery analysis first before generating a certificate")
+
+    cert_id = generate_certificate_id()
+    # Ensure uniqueness
+    while db.query(Certificate).filter(Certificate.certificate_id == cert_id).first():
+        cert_id = generate_certificate_id()
+
+    cert = Certificate(
+        certificate_id=cert_id,
+        battery_id=battery.id,
+        soh_pct=soh.soh_pct,
+        rul_years=rul.rul_years,
+        risk_level=risk.risk_level,
+        second_life_classification=sl.classification,
+        recommended_application=sl.recommended_application,
+        cycle_count=battery.cycle_count or 0,
+        assessment_summary=(
+            f"Battery {battery.battery_id} assessed using the BatteryX AI prototype analysis engine. "
+            f"State of Health: {soh.soh_pct}% ({soh.health_status}). "
+            f"Remaining Useful Life estimate: {rul.rul_years} years. "
+            f"Safety Risk: {risk.risk_level}. "
+            f"Second-Life Classification: {sl.classification}. "
+            f"DEMO DATA — Prototype estimate only. Not scientifically validated."
+        ),
+    )
+    db.add(cert)
+    log = AuditLog(user_id=current_user.id, action="certificate.generated",
+                   resource_type="certificate", resource_id=cert_id)
+    db.add(log)
+    db.commit()
+    db.refresh(cert)
+    return cert
+
+
+@router.get("/{certificate_id}", response_model=CertificateResponse)
+def get_certificate(
+    certificate_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    cert = db.query(Certificate).filter(Certificate.certificate_id == certificate_id).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    return cert
+
+
+@router.get("/{certificate_id}/pdf")
+def download_certificate_pdf(
+    certificate_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    cert = db.query(Certificate).filter(Certificate.certificate_id == certificate_id).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    battery = db.query(Battery).filter(Battery.id == cert.battery_id).first()
+
+    pdf_bytes = generate_certificate_pdf(
+        certificate_id=cert.certificate_id,
+        battery_id=battery.battery_id,
+        manufacturer=battery.manufacturer or "Unknown",
+        model=battery.model or "Unknown",
+        chemistry=battery.chemistry or "Unknown",
+        soh_pct=cert.soh_pct,
+        rul_years=cert.rul_years,
+        risk_level=cert.risk_level,
+        cycle_count=cert.cycle_count,
+        second_life_classification=cert.second_life_classification,
+        recommended_application=cert.recommended_application,
+        assessment_summary=cert.assessment_summary,
+        issued_at=cert.issued_at,
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="BatteryX-Certificate-{certificate_id}.pdf"'},
+    )
+
+
+@router.get("/{certificate_id}/qr")
+def get_qr_code(
+    certificate_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    cert = db.query(Certificate).filter(Certificate.certificate_id == certificate_id).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    qr_bytes = generate_qr_code(certificate_id)
+    return Response(content=qr_bytes, media_type="image/png")
+
+
+@router.get("/verify/{certificate_id}", response_model=VerifyResponse)
+def verify_certificate(certificate_id: str, db: Session = Depends(get_db)):
+    """Public endpoint — no auth required — for QR code scanning."""
+    cert = db.query(Certificate).filter(Certificate.certificate_id == certificate_id).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found or invalid")
+
+    battery = db.query(Battery).filter(Battery.id == cert.battery_id).first()
+
+    return VerifyResponse(
+        is_valid=cert.is_valid,
+        certificate_id=cert.certificate_id,
+        battery_id=battery.battery_id if battery else "Unknown",
+        soh_pct=cert.soh_pct,
+        rul_years=cert.rul_years,
+        risk_level=cert.risk_level,
+        second_life_classification=cert.second_life_classification,
+        issued_at=cert.issued_at,
+        verified_at=datetime.utcnow(),
+    )

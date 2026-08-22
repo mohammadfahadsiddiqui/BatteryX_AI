@@ -1,12 +1,15 @@
 """BatteryX AI – Application Configuration"""
 import os
 import secrets
+import tempfile
 from pydantic_settings import BaseSettings
 
 
 def _default_db_url() -> str:
     if os.getenv("VERCEL"):
-        return "sqlite:////tmp/batteryx.db"
+        temp_dir = tempfile.gettempdir()
+        db_path = os.path.join(temp_dir, "batteryx.db")
+        return "sqlite:///" + db_path.replace("\\", "/")
     return "sqlite:///./batteryx.db"
 
 
@@ -14,7 +17,7 @@ class Settings(BaseSettings):
     # App
     APP_NAME: str = "BatteryX AI"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database – defaults to SQLite; override with DATABASE_URL env var for PostgreSQL
     DATABASE_URL: str = os.getenv("DATABASE_URL", _default_db_url())

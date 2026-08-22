@@ -1,15 +1,18 @@
 """BatteryX AI – Database session factory"""
 import os
 import shutil
+import tempfile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
-# If running in Vercel serverless, ensure sqlite db exists in /tmp
+# If running in Vercel serverless, ensure sqlite db exists in temp dir
 if os.environ.get("VERCEL"):
-    target_db = "/tmp/batteryx.db"
+    temp_dir = tempfile.gettempdir()
+    target_db = os.path.join(temp_dir, "batteryx.db")
     if not os.path.exists(target_db):
         for candidate in [
+            os.path.join(os.path.dirname(__file__), "..", "..", "batteryx.db"),
             "./backend/batteryx.db",
             "../backend/batteryx.db",
             "/var/task/backend/batteryx.db",
@@ -28,7 +31,7 @@ connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL
 engine = create_engine(
     settings.DATABASE_URL,
     connect_args=connect_args,
-    echo=settings.DEBUG,
+    echo=False,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -44,7 +47,7 @@ def init_db():
             seed_database()
             _db_initialized = True
         except Exception as e:
-            print(f"DB auto-initialization message: {e}")
+            print(f"DB auto-initialization: {e}")
             _db_initialized = True
 
 

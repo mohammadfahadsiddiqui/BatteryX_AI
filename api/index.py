@@ -32,4 +32,26 @@ if os.environ.get("VERCEL"):
                 except Exception as e:
                     print(f"Database copy notice: {e}")
 
-from app.main import app
+try:
+    from app.main import app
+except Exception as startup_error:
+    import traceback
+    error_trace = traceback.format_exc()
+    print("Startup Error:", error_trace)
+    
+    # Fallback ASGI application to display the startup error
+    async def app(scope, receive, send):
+        assert scope['type'] == 'http'
+        response_body = f"Internal Server Error during startup:\n\n{error_trace}".encode("utf-8")
+        await send({
+            'type': 'http.response.start',
+            'status': 500,
+            'headers': [
+                (b'content-type', b'text/plain'),
+                (b'content-length', str(len(response_body)).encode("utf-8"))
+            ]
+        })
+        await send({
+            'type': 'http.response.body',
+            'body': response_body
+        })

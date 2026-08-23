@@ -66,7 +66,7 @@ export function LiveChart({
               boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
               fontSize: '12px',
             }}
-            formatter={(value: number | string) => [`${value}${unit ? ` ${unit}` : ''}`, seriesName]}
+            formatter={(value: any) => [`${value}${unit ? ` ${unit}` : ''}`, seriesName]}
             labelFormatter={(value) => `Time: ${value}`}
           />
           <Line

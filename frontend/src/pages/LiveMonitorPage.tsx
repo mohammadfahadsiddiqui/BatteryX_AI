@@ -202,14 +202,14 @@ export function LiveMonitorPage() {
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: '0.875rem' }}>
-        {[
+        {([
           ['Voltage', latestPacket?.voltage_v != null ? `${latestPacket.voltage_v.toFixed(1)} V` : '—', Zap],
           ['Current', latestPacket?.current_a != null ? `${latestPacket.current_a.toFixed(1)} A` : '—', Activity],
           ['Temperature', latestPacket?.temperature_c != null ? `${latestPacket.temperature_c.toFixed(1)} °C` : '—', Thermometer],
           ['SOC', latestPacket?.soc_pct != null ? `${latestPacket.soc_pct.toFixed(1)}%` : '—', Activity],
           ['Power', latestPacket?.power_w != null ? `${latestPacket.power_w.toFixed(0)} W` : '—', Zap],
-        ].map(([label, value, Icon]) => (
-          <div key={String(label)} className="card metric-card">
+        ] as any[]).map(([label, value, Icon]) => (
+          <div key={label} className="card metric-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span className="section-title">{label}</span>
               <Icon size={17} color="#66CC99" />
@@ -240,7 +240,7 @@ export function LiveMonitorPage() {
       </div>
 
       {latestPacket?.cell_voltages && latestPacket.cell_voltages.length > 1 && (
-        <div className="card"><div className="section-title" style={{ marginBottom: 10 }}>Cell Voltage Monitoring</div><CellVoltageGrid voltages={latestPacket.cell_voltages} /></div>
+        <div className="card"><div className="section-title" style={{ marginBottom: 10 }}>Cell Voltage Monitoring</div><CellVoltageGrid cellVoltages={latestPacket.cell_voltages} /></div>
       )}
     </div>
   );

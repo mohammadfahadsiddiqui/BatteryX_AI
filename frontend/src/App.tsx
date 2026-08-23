@@ -1,10 +1,9 @@
-// BatteryX AI – Main App with Extended Routing (v3.0)
+// BatteryX AI – Main App with direct dashboard entry (v3.1)
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AppLayout from './components/layout/AppLayout';
 
-import LandingPage from './pages/LandingPage';
 import TechnologyPage from './pages/TechnologyPage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
@@ -40,17 +39,23 @@ function Protected({ children }: { children: React.ReactNode }) {
   return <PrivateRoute><AppLayout>{children}</AppLayout></PrivateRoute>;
 }
 
+// The dashboard is the application entry point. It is intentionally public
+// read-only so opening the app URL never forces a user through a website/login.
+function PublicDashboard() {
+  return <AppLayout><DashboardPage /></AppLayout>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
+      <Route path="/" element={<PublicDashboard />} />
+      <Route path="/dashboard" element={<PublicDashboard />} />
       <Route path="/technology" element={<TechnologyPage />} />
       <Route path="/about" element={<TechnologyPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify/:certificateId" element={<VerifyPage />} />
 
-      <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
       <Route path="/batteries" element={<Protected><BatteryInventoryPage /></Protected>} />
       <Route path="/batteries/add" element={<Protected><AddBatteryPage /></Protected>} />
       <Route path="/batteries/:id" element={<Protected><BatteryDetailsPage /></Protected>} />

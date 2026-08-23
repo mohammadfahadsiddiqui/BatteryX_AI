@@ -119,6 +119,30 @@ def get_demo_telemetry(
 @app.on_event("startup")
 async def startup():
     """Initialise database on first run."""
+    import os
+    import shutil
+    import tempfile
+    
+    if os.environ.get("VERCEL"):
+        temp_dir = tempfile.gettempdir()
+        target_db = os.path.join(temp_dir, "batteryx.db")
+        if not os.path.exists(target_db):
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.abspath(os.path.join(current_dir, "../.."))
+            backend_dir = os.path.join(root_dir, "backend")
+            for candidate in [
+                os.path.join(backend_dir, "batteryx.db"),
+                os.path.join(root_dir, "batteryx.db"),
+                "/var/task/backend/batteryx.db",
+                "/var/task/batteryx.db",
+            ]:
+                if os.path.exists(candidate):
+                    try:
+                        shutil.copy2(candidate, target_db)
+                        break
+                    except Exception as e:
+                        print(f"Database copy notice: {e}")
+
     try:
         from app.db.session import init_db
         init_db()

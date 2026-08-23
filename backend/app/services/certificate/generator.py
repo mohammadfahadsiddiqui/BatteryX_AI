@@ -37,7 +37,7 @@ def generate_qr_code(certificate_id: str) -> bytes:
     qr.make(fit=True)
     img = qr.make_image(fill_color="#0D1526", back_color="white")
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf)
     return buf.getvalue()
 
 

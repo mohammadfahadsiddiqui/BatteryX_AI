@@ -1,25 +1,23 @@
-"""BatteryX AI – Dashboard statistics API"""
+"""BatteryX AI – Dashboard statistics API."""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.db.session import get_db
-from app.db.models import Battery, SOHPrediction, RiskAssessment, SecondLifeAssessment, DiagnosticTest, User
-from app.api.deps import get_current_user
+from app.db.models import Battery, SOHPrediction, RiskAssessment, SecondLifeAssessment
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
 @router.get("/stats")
-def get_dashboard_stats(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+def get_dashboard_stats(db: Session = Depends(get_db)):
+    """Public read-only dashboard snapshot for the app landing dashboard.
+
+    The dashboard is intentionally viewable without signing in. Mutating and
+    operational endpoints remain protected by the normal JWT dependency.
+    """
     total_batteries = db.query(Battery).count()
 
-    # Latest SOH per battery
     soh_records = db.query(SOHPrediction).all()
-    # Group by battery_id keeping latest
     latest_soh_map = {}
     for s in soh_records:
         if s.battery_id not in latest_soh_map or s.created_at > latest_soh_map[s.battery_id].created_at:
@@ -28,12 +26,10 @@ def get_dashboard_stats(
     soh_values = [s.soh_pct for s in latest_soh_map.values()]
     avg_soh = round(sum(soh_values) / len(soh_values), 1) if soh_values else 0.0
 
-    # Health distribution
     health_dist = {"Excellent": 0, "Good": 0, "Fair": 0, "Poor": 0, "Critical": 0}
     for s in latest_soh_map.values():
         health_dist[s.health_status] = health_dist.get(s.health_status, 0) + 1
 
-    # Risk distribution
     risk_records = db.query(RiskAssessment).all()
     latest_risk_map = {}
     for r in risk_records:
@@ -47,7 +43,6 @@ def get_dashboard_stats(
         if r.risk_level == "HIGH":
             high_risk += 1
 
-    # Second-life distribution
     sl_records = db.query(SecondLifeAssessment).all()
     latest_sl_map = {}
     for sl in sl_records:
@@ -61,7 +56,6 @@ def get_dashboard_stats(
         if sl.classification in ("Continue EV Use", "Second-Life Energy Storage"):
             second_life_eligible += 1
 
-    # Recent diagnostics (last 10)
     batteries = db.query(Battery).limit(10).all()
     recent = []
     for b in batteries:

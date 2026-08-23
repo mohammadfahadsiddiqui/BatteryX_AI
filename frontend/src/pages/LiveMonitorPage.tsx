@@ -25,7 +25,6 @@ export function LiveMonitorPage() {
   const [isPaused, setIsPaused] = useState(false);
   const [latestPacket, setLatestPacket] = useState<LiveTelemetry | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<BatteryAlert[]>([]);
-  const [fallbackPolling, setFallbackPolling] = useState(false);
 
   const [voltageSeries, setVoltageSeries] = useState<DataPoint[]>([]);
   const [currentSeries, setCurrentSeries] = useState<DataPoint[]>([]);
@@ -64,6 +63,9 @@ export function LiveMonitorPage() {
   const handleNewPacket = useCallback((pkt: LiveTelemetry) => {
     if (isPaused) return;
     setLatestPacket(pkt);
+    // A successful telemetry packet means the monitor is receiving live data,
+    // regardless of whether transport is WebSocket or HTTP polling.
+    if (!isDemoMode) setIsLiveConnected(true);
     const timeStr = new Date(pkt.timestamp || Date.now()).toLocaleTimeString([], {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
@@ -76,7 +78,7 @@ export function LiveMonitorPage() {
     setTempSeries(prev => pushPoint(prev, pkt.temperature_c, 'temperature'));
     setSocSeries(prev => pushPoint(prev, pkt.soc_pct, 'soc'));
     setPowerSeries(prev => pushPoint(prev, pkt.power_w, 'power'));
-  }, [isPaused]);
+  }, [isPaused, isDemoMode]);
 
   useEffect(() => {
     if (!selectedBatteryId) return;
@@ -89,7 +91,7 @@ export function LiveMonitorPage() {
     setLatestPacket(null);
     setActiveAlerts([]);
     tickRef.current = 0;
-    setFallbackPolling(false);
+    setIsLiveConnected(false);
 
     if (wsRef.current) {
       wsRef.current.disconnect();
@@ -122,21 +124,29 @@ export function LiveMonitorPage() {
       };
     }
 
+    // Vercel serverless deployments do not provide persistent WebSockets.
+    // Use the HTTP telemetry stream as the production live transport. A
+    // WebSocket is still supported automatically when explicitly enabled.
+    const useWebSocket = import.meta.env.VITE_ENABLE_WEBSOCKET === 'true';
+
+    if (!useWebSocket) {
+      pollStopRef.current = createTelemetryPoller(selectedBatteryId, handleNewPacket, 2000);
+      telemetryApi.getLatest(selectedBatteryId).then((pkt) => {
+        if (pkt) handleNewPacket(pkt);
+      }).catch(console.error);
+      return () => {
+        if (pollStopRef.current) pollStopRef.current();
+        pollStopRef.current = null;
+      };
+    }
+
     const ws = new BatteryWebSocket(selectedBatteryId);
     wsRef.current = ws;
-    ws.onConnected = () => {
-      setIsLiveConnected(true);
-      setFallbackPolling(false);
-      if (pollStopRef.current) {
-        pollStopRef.current();
-        pollStopRef.current = null;
-      }
-    };
+    ws.onConnected = () => setIsLiveConnected(true);
     ws.onDisconnected = () => {
       setIsLiveConnected(false);
       if (!pollStopRef.current) {
-        setFallbackPolling(true);
-        pollStopRef.current = createTelemetryPoller(selectedBatteryId, handleNewPacket, 5000);
+        pollStopRef.current = createTelemetryPoller(selectedBatteryId, handleNewPacket, 2000);
       }
     };
     ws.onTelemetry = handleNewPacket;
@@ -151,7 +161,6 @@ export function LiveMonitorPage() {
       ws.disconnect();
       if (pollStopRef.current) pollStopRef.current();
       pollStopRef.current = null;
-      setFallbackPolling(false);
     };
   }, [selectedBatteryId, isDemoMode, demoScenario, handleNewPacket]);
 
@@ -191,10 +200,6 @@ export function LiveMonitorPage() {
         </div>
       </div>
 
-      {fallbackPolling && !isDemoMode && (
-        <div className="demo-banner">Live WebSocket unavailable — showing latest telemetry through polling fallback.</div>
-      )}
-
       {activeAlerts.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {activeAlerts.map((alert) => <AlertBanner key={alert.alert_id} alert={alert} />)}
@@ -228,7 +233,7 @@ export function LiveMonitorPage() {
           </div>
         </div>
         <div style={{ color: isLiveConnected ? '#4DBF88' : '#8B949C', fontWeight: 600, fontSize: '0.8rem' }}>
-          {isDemoMode ? 'SIMULATION' : isLiveConnected ? 'LIVE CONNECTION' : 'OFFLINE / FALLBACK'}
+          {isDemoMode ? 'SIMULATION' : isLiveConnected ? (import.meta.env.VITE_ENABLE_WEBSOCKET === 'true' ? 'LIVE CONNECTION' : 'LIVE POLLING') : 'WAITING FOR TELEMETRY'}
         </div>
       </div>
 

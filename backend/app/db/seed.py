@@ -4,7 +4,7 @@ All data is clearly marked as DEMO DATA and must not be interpreted
 as real-world validated battery measurements.
 """
 import random
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from app.db.session import SessionLocal, engine
 from app.db.models import Base, Organization, User, Battery, BatteryReading, BatteryCycle, DiagnosticTest, SOHPrediction, RULPrediction, RiskAssessment, SecondLifeAssessment, Certificate
 from app.core.security import get_password_hash
@@ -413,7 +413,7 @@ def seed_database():
                 battery_id=battery.id,
                 run_by_user_id="user-admin-001",
                 status="complete",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
                 notes="DEMO DATA analysis run",
             )
             db.add(diag)

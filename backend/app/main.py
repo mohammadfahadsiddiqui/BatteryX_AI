@@ -1,6 +1,15 @@
 """BatteryX AI – FastAPI application entry point (v3.0)"""
 import asyncio
 import json
+import sys
+import os
+
+# Ensure the backend directory is in sys.path so that 'from app.*' imports work correctly on Vercel
+current_dir = os.path.dirname(os.path.abspath(__file__))
+backend_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

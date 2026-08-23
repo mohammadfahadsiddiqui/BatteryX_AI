@@ -423,8 +423,8 @@ def seed_database():
             soh = SOHPrediction(
                 battery_id=battery.id,
                 diagnostic_test_id=diag.id,
-                soh_pct=b_data["soh"],
-                health_status=_get_health_status(b_data["soh"]),
+                soh_pct=float(b_data["soh"]), # type: ignore
+                health_status=_get_health_status(float(b_data["soh"])), # type: ignore
                 confidence_pct=92.0,
                 method="physics_based_prototype",
                 prediction_notes="DEMO DATA – Physics-based prototype estimate, not scientifically validated.",
@@ -435,11 +435,11 @@ def seed_database():
             rul = RULPrediction(
                 battery_id=battery.id,
                 diagnostic_test_id=diag.id,
-                rul_years=b_data["rul_years"],
-                rul_cycles=int(b_data["rul_years"] * 400),
+                rul_years=float(b_data["rul_years"]), # type: ignore
+                rul_cycles=int(b_data["rul_years"] * 400), # type: ignore
                 confidence_pct=85.0,
                 soh_at_eol_pct=70.0,
-                degradation_projections=_get_degradation_projections(b_data["soh"], b_data["rul_years"]),
+                degradation_projections=_get_degradation_projections(float(b_data["soh"]), float(b_data["rul_years"])), # type: ignore
             )
             db.add(rul)
 
@@ -454,7 +454,7 @@ def seed_database():
                     "LOW": "Continue normal operation with routine monitoring.",
                     "MODERATE": "Schedule inspection within 3 months. Monitor temperature and resistance.",
                     "HIGH": "Immediate inspection required. Remove from service if risk increases.",
-                }[b_data["risk_level"]],
+                }[str(b_data["risk_level"])],
             )
             db.add(risk)
 

@@ -22,12 +22,34 @@ def init_db():
     if _db_initialized:
         return
 
+    import shutil
+    import tempfile
+
+    if os.environ.get("VERCEL"):
+        temp_dir = tempfile.gettempdir()
+        target_db = os.path.join(temp_dir, "batteryx.db")
+        if not os.path.exists(target_db):
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.abspath(os.path.join(current_dir, "../../.."))
+            backend_dir = os.path.join(root_dir, "backend")
+            for candidate in [
+                os.path.join(backend_dir, "batteryx.db"),
+                os.path.join(root_dir, "batteryx.db"),
+                "/var/task/backend/batteryx.db",
+                "/var/task/batteryx.db",
+            ]:
+                if os.path.exists(candidate):
+                    try:
+                        shutil.copy2(candidate, target_db)
+                        break
+                    except Exception as e:
+                        print(f"[DB] Database copy notice: {e}")
+
     from app.db.seed import seed_database
 
     try:
         seed_database()
     except Exception as exc:
-        # Startup must remain diagnosable instead of failing silently.
         print(f"[DB] initialization warning: {exc}")
     finally:
         _db_initialized = True

@@ -10,6 +10,11 @@ const WS_BASE = window.location.protocol === 'https:'
   ? `wss://${window.location.host}`
   : `ws://${window.location.host}`;
 
+// Vercel serverless functions do not provide a persistent WebSocket endpoint.
+// Keep WebSocket opt-in so production does not repeatedly connect to /ws/*
+// and receive the SPA's HTTP 200 response during the handshake.
+const WEBSOCKET_ENABLED = import.meta.env.VITE_ENABLE_WEBSOCKET === 'true';
+
 export class BatteryWebSocket {
   private batteryId: string;
   private ws: WebSocket | null = null;
@@ -32,6 +37,13 @@ export class BatteryWebSocket {
 
   connect(): void {
     if (this._destroyed) return;
+
+    if (!WEBSOCKET_ENABLED) {
+      this._connected = false;
+      this.onDisconnected?.(this.batteryId);
+      return;
+    }
+
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
 
     try {
@@ -132,14 +144,14 @@ export class BatteryWebSocket {
 export function createTelemetryPoller(
   batteryId: string,
   onData: TelemetryCallback,
-  intervalMs = 5000,
+  intervalMs = 2000,
 ): () => void {
-  const token = localStorage.getItem('bx_token');
   let active = true;
 
   const poll = async () => {
     if (!active) return;
     try {
+      const token = localStorage.getItem('bx_token');
       const res = await fetch(`/api/v1/telemetry/${encodeURIComponent(batteryId)}/latest`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });

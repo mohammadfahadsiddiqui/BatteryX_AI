@@ -1,4 +1,4 @@
-// BatteryX AI – Main App with direct dashboard entry (v3.1)
+// BatteryX AI – Main application router (v3.2 – dashboard-first entry)
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -39,8 +39,8 @@ function Protected({ children }: { children: React.ReactNode }) {
   return <PrivateRoute><AppLayout>{children}</AppLayout></PrivateRoute>;
 }
 
-// The dashboard is the application entry point. It is intentionally public
-// read-only so opening the app URL never forces a user through a website/login.
+// BatteryX AI is an application, not a marketing website.
+// The root URL must open the dashboard immediately.
 function PublicDashboard() {
   return <AppLayout><DashboardPage /></AppLayout>;
 }
@@ -48,8 +48,11 @@ function PublicDashboard() {
 function AppRoutes() {
   return (
     <Routes>
+      {/* Direct application entry — no LandingPage, no login redirect. */}
       <Route path="/" element={<PublicDashboard />} />
       <Route path="/dashboard" element={<PublicDashboard />} />
+
+      {/* Informational/auth pages remain available only when explicitly opened. */}
       <Route path="/technology" element={<TechnologyPage />} />
       <Route path="/about" element={<TechnologyPage />} />
       <Route path="/login" element={<LoginPage />} />

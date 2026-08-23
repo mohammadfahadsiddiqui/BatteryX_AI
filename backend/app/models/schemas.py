@@ -2,16 +2,35 @@
 from __future__ import annotations
 from datetime import datetime, date
 from typing import Optional, List, Any
-from pydantic import BaseModel, EmailStr, Field
+import re
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _validate_email(value: str) -> str:
+    value = value.strip().lower()
+    if not _EMAIL_RE.fullmatch(value):
+        raise ValueError("Invalid email address")
+    return value
+
+
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # Use plain str validation instead of Pydantic EmailStr so the Vercel
+    # serverless runtime does not require the optional email-validator package
+    # merely to import the application.
+    email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        return _validate_email(value)
 
 
 class TokenResponse(BaseModel):
@@ -24,10 +43,15 @@ class TokenResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str = Field(min_length=8)
     full_name: str
     organization_name: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        return _validate_email(value)
 
 
 # ---------------------------------------------------------------------------
@@ -232,4 +256,3 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
-

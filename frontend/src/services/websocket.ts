@@ -5,6 +5,7 @@ type TelemetryCallback = (data: LiveTelemetry) => void;
 type AlertCallback = (data: BatteryAlert) => void;
 type ConnectionCallback = (batteryId: string) => void;
 type GenericCallback = (msg: WSMessage) => void;
+type FallbackCallback = () => Promise<void>;
 
 const WS_BASE = window.location.protocol === 'https:'
   ? `wss://${window.location.host}`
@@ -91,6 +92,7 @@ export class BatteryWebSocket {
       case 'voltage_warning':
       case 'current_warning':
       case 'cell_imbalance_warning':
+      case 'bms_fault':
         if (msg.data) this.onAlert?.(msg.data as BatteryAlert);
         break;
       case 'pong':
@@ -141,12 +143,19 @@ export class BatteryWebSocket {
   }
 }
 
+/**
+ * Poll live telemetry. If the API has no live packet yet, the optional
+ * fallback callback is invoked so the UI can show the latest manually
+ * recorded battery reading instead of an empty dashboard.
+ */
 export function createTelemetryPoller(
   batteryId: string,
   onData: TelemetryCallback,
   intervalMs = 2000,
+  onNoLiveData?: FallbackCallback,
 ): () => void {
   let active = true;
+  let fallbackInFlight = false;
 
   const poll = async () => {
     if (!active) return;
@@ -157,10 +166,29 @@ export function createTelemetryPoller(
       });
       if (res.ok) {
         const data = await res.json();
-        if (data) onData(data as LiveTelemetry);
+        if (data) {
+          onData(data as LiveTelemetry);
+          return;
+        }
+      }
+
+      if (onNoLiveData && !fallbackInFlight) {
+        fallbackInFlight = true;
+        try {
+          await onNoLiveData();
+        } finally {
+          fallbackInFlight = false;
+        }
       }
     } catch {
-      // Polling fallback is best-effort.
+      if (onNoLiveData && !fallbackInFlight) {
+        fallbackInFlight = true;
+        try {
+          await onNoLiveData();
+        } finally {
+          fallbackInFlight = false;
+        }
+      }
     }
   };
 

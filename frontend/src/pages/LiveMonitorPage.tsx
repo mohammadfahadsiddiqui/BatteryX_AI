@@ -1,12 +1,9 @@
 // BatteryX AI – Live Telemetry Monitor Page
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import {
-  Activity, Zap, Gauge, Thermometer, Battery as BatteryIcon,
-  Play, Pause, RefreshCw, AlertTriangle, ShieldCheck
-} from 'lucide-react';
+import { Activity, Zap, Thermometer, Play, Pause } from 'lucide-react';
 import { batteryApi, demoApi, telemetryApi } from '../services/api';
-import { BatteryWebSocket } from '../services/websocket';
+import { BatteryWebSocket, createTelemetryPoller } from '../services/websocket';
 import { LiveChart, DataPoint } from '../components/charts/LiveChart';
 import { CellVoltageGrid } from '../components/charts/CellVoltageGrid';
 import { LiveIndicator } from '../components/ui/LiveIndicator';
@@ -19,423 +16,232 @@ export function LiveMonitorPage() {
   const initialBatteryId = searchParams.get('battery') || '';
 
   const [batteries, setBatteries] = useState<Battery[]>([]);
-  const [selectedBatteryId, setSelectedBatteryId] = useState<string>(initialBatteryId);
+  const [selectedBatteryId, setSelectedBatteryId] = useState(initialBatteryId);
   const [selectedBattery, setSelectedBattery] = useState<Battery | null>(null);
-
-  // Connection & mode state
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(true);
-  const [demoScenario, setDemoScenario] = useState<string>('healthy');
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [demoScenario, setDemoScenario] = useState('healthy');
   const [demoScenarios, setDemoScenarios] = useState<Array<{ key: string; label: string }>>([]);
-  const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
-  const [isPaused, setIsPaused] = useState<boolean>(false);
-
-  // Real-time telemetry data
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [latestPacket, setLatestPacket] = useState<LiveTelemetry | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<BatteryAlert[]>([]);
+  const [fallbackPolling, setFallbackPolling] = useState(false);
 
-  // Time-series chart buffers (window of 40 points)
   const [voltageSeries, setVoltageSeries] = useState<DataPoint[]>([]);
   const [currentSeries, setCurrentSeries] = useState<DataPoint[]>([]);
   const [tempSeries, setTempSeries] = useState<DataPoint[]>([]);
   const [socSeries, setSocSeries] = useState<DataPoint[]>([]);
   const [powerSeries, setPowerSeries] = useState<DataPoint[]>([]);
 
-  const tickRef = useRef<number>(0);
+  const tickRef = useRef(0);
   const wsRef = useRef<BatteryWebSocket | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollStopRef = useRef<(() => void) | null>(null);
+  const demoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load initial battery list and demo scenarios
   useEffect(() => {
-    batteryApi.list().then((list) => {
+    let mounted = true;
+    Promise.all([
+      batteryApi.list(),
+      demoApi.getScenarios(),
+    ]).then(([list, scenarios]) => {
+      if (!mounted) return;
       setBatteries(list);
-      if (!selectedBatteryId && list.length > 0) {
-        setSelectedBatteryId(list[0].battery_id);
-      }
+      setDemoScenarios(scenarios);
+      if (!selectedBatteryId && list.length) setSelectedBatteryId(list[0].battery_id);
     }).catch(console.error);
-
-    demoApi.getScenarios().then(setDemoScenarios).catch(console.error);
+    return () => { mounted = false; };
   }, []);
 
-  // Update selected battery object
   useEffect(() => {
-    if (selectedBatteryId && batteries.length > 0) {
-      const b = batteries.find((x) => x.battery_id === selectedBatteryId || x.id === selectedBatteryId);
-      setSelectedBattery(b || null);
+    if (!selectedBatteryId) {
+      setSelectedBattery(null);
+      return;
     }
+    const found = batteries.find((x) => x.battery_id === selectedBatteryId || x.id === selectedBatteryId);
+    setSelectedBattery(found || null);
   }, [selectedBatteryId, batteries]);
 
-  // Handle incoming telemetry point (both from WS and Demo Generator)
-  const handleNewPacket = (pkt: LiveTelemetry) => {
+  const handleNewPacket = useCallback((pkt: LiveTelemetry) => {
     if (isPaused) return;
-
     setLatestPacket(pkt);
-
     const timeStr = new Date(pkt.timestamp || Date.now()).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
-
-    const pushPoint = (prev: DataPoint[], val: number | undefined, key: string): DataPoint[] => {
-      if (val === undefined || val === null) return prev;
-      const next = [...prev, { time: timeStr, [key]: val }];
-      return next.slice(-40); // keep last 40 points
+    const pushPoint = (prev: DataPoint[], val: number | undefined, key: string) => {
+      if (val == null || Number.isNaN(val)) return prev;
+      return [...prev, { time: timeStr, [key]: val }].slice(-40);
     };
+    setVoltageSeries(prev => pushPoint(prev, pkt.voltage_v, 'voltage'));
+    setCurrentSeries(prev => pushPoint(prev, pkt.current_a, 'current'));
+    setTempSeries(prev => pushPoint(prev, pkt.temperature_c, 'temperature'));
+    setSocSeries(prev => pushPoint(prev, pkt.soc_pct, 'soc'));
+    setPowerSeries(prev => pushPoint(prev, pkt.power_w, 'power'));
+  }, [isPaused]);
 
-    setVoltageSeries((prev) => pushPoint(prev, pkt.voltage_v, 'voltage'));
-    setCurrentSeries((prev) => pushPoint(prev, pkt.current_a, 'current'));
-    setTempSeries((prev) => pushPoint(prev, pkt.temperature_c, 'temperature'));
-    setSocSeries((prev) => pushPoint(prev, pkt.soc_pct, 'soc'));
-    setPowerSeries((prev) => pushPoint(prev, pkt.power_w, 'power'));
-  };
-
-  // Demo generator loop or WebSocket connection
   useEffect(() => {
     if (!selectedBatteryId) return;
 
-    // Reset series when battery or mode changes
     setVoltageSeries([]);
     setCurrentSeries([]);
     setTempSeries([]);
     setSocSeries([]);
     setPowerSeries([]);
+    setLatestPacket(null);
+    setActiveAlerts([]);
     tickRef.current = 0;
+    setFallbackPolling(false);
+
+    if (wsRef.current) {
+      wsRef.current.disconnect();
+      wsRef.current = null;
+    }
+    if (pollStopRef.current) {
+      pollStopRef.current();
+      pollStopRef.current = null;
+    }
+    if (demoTimerRef.current) {
+      clearInterval(demoTimerRef.current);
+      demoTimerRef.current = null;
+    }
 
     if (isDemoMode) {
-      // Demo loop
-      if (wsRef.current) {
-        wsRef.current.disconnect();
-        wsRef.current = null;
-      }
       setIsLiveConnected(false);
-
       const runDemoTick = async () => {
         try {
-          const pkt = await demoApi.getTelemetry(
-            selectedBatteryId,
-            demoScenario,
-            tickRef.current++
-          );
+          const pkt = await demoApi.getTelemetry(selectedBatteryId, demoScenario, tickRef.current++);
           handleNewPacket(pkt);
-        } catch (e) {
-          console.error('Demo tick failed', e);
+        } catch (error) {
+          console.error('Demo telemetry failed', error);
         }
       };
-
-      runDemoTick();
-      const interval = setInterval(runDemoTick, 1500);
-      timerRef.current = interval;
-
-      return () => clearInterval(interval);
-    } else {
-      // Real Hardware WebSocket
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-
-      const ws = new BatteryWebSocket(selectedBatteryId);
-      wsRef.current = ws;
-
-      ws.onConnected = () => setIsLiveConnected(true);
-      ws.onDisconnected = () => setIsLiveConnected(false);
-      ws.onTelemetry = (pkt) => handleNewPacket(pkt);
-      ws.onAlert = (alert) => setActiveAlerts((prev) => [alert, ...prev.slice(0, 4)]);
-
-      ws.connect();
-
-      // Also fetch latest snapshot from REST API
-      telemetryApi.getLatest(selectedBatteryId).then((pkt) => {
-        if (pkt) handleNewPacket(pkt);
-      }).catch(console.error);
-
+      void runDemoTick();
+      demoTimerRef.current = setInterval(() => { void runDemoTick(); }, 1500);
       return () => {
-        ws.disconnect();
+        if (demoTimerRef.current) clearInterval(demoTimerRef.current);
+        demoTimerRef.current = null;
       };
     }
-  }, [selectedBatteryId, isDemoMode, demoScenario, isPaused]);
+
+    const ws = new BatteryWebSocket(selectedBatteryId);
+    wsRef.current = ws;
+    ws.onConnected = () => {
+      setIsLiveConnected(true);
+      setFallbackPolling(false);
+      if (pollStopRef.current) {
+        pollStopRef.current();
+        pollStopRef.current = null;
+      }
+    };
+    ws.onDisconnected = () => {
+      setIsLiveConnected(false);
+      if (!pollStopRef.current) {
+        setFallbackPolling(true);
+        pollStopRef.current = createTelemetryPoller(selectedBatteryId, handleNewPacket, 5000);
+      }
+    };
+    ws.onTelemetry = handleNewPacket;
+    ws.onAlert = (alert) => setActiveAlerts(prev => [alert, ...prev].slice(0, 5));
+    ws.connect();
+
+    telemetryApi.getLatest(selectedBatteryId).then((pkt) => {
+      if (pkt) handleNewPacket(pkt);
+    }).catch(console.error);
+
+    return () => {
+      ws.disconnect();
+      if (pollStopRef.current) pollStopRef.current();
+      pollStopRef.current = null;
+      setFallbackPolling(false);
+    };
+  }, [selectedBatteryId, isDemoMode, demoScenario, handleNewPacket]);
 
   return (
     <div className="page-enter" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Top Header & Battery Selector */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#3F4A56', letterSpacing: '-0.02em' }}>
-              Live Telemetry Monitor
-            </h1>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#3F4A56' }}>Live Telemetry Monitor</h1>
             <LiveIndicator isLive={isLiveConnected} isDemo={isDemoMode} />
           </div>
           <p style={{ fontSize: '0.875rem', color: '#68737D', marginTop: '0.25rem' }}>
-            Real-time streaming telemetry, high-frequency charts, and cell-level diagnostic telemetry.
+            Real-time telemetry, hardware status, alerts and battery diagnostics.
           </p>
         </div>
 
-        {/* Controls Bar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {/* Battery Dropdown */}
-          <select
-            value={selectedBatteryId}
-            onChange={(e) => setSelectedBatteryId(e.target.value)}
-            className="input-field"
-            style={{ width: 'auto', minWidth: '180px' }}
-          >
-            {batteries.map((b) => (
-              <option key={b.id} value={b.battery_id}>
-                {b.battery_id} ({b.manufacturer || 'EV Pack'})
-              </option>
-            ))}
+          <select value={selectedBatteryId} onChange={(e) => setSelectedBatteryId(e.target.value)} className="input-field" style={{ width: 'auto', minWidth: '180px' }}>
+            {batteries.map((b) => <option key={b.id} value={b.battery_id}>{b.battery_id} ({b.manufacturer || 'EV Pack'})</option>)}
           </select>
 
-          {/* Mode Switch: Demo vs Live Hardware */}
-          <div style={{ display: 'flex', background: '#F7F9F8', border: '1px solid #E2E8E5', borderRadius: '8px', padding: '0.2rem' }}>
-            <button
-              onClick={() => setIsDemoMode(true)}
-              style={{
-                padding: '0.35rem 0.75rem',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                borderRadius: '6px',
-                border: 'none',
-                cursor: 'pointer',
-                background: isDemoMode ? '#FFFFFF' : 'transparent',
-                color: isDemoMode ? '#3F4A56' : '#8B949C',
-                boxShadow: isDemoMode ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-              }}
-            >
-              Demo Simulation
-            </button>
-            <button
-              onClick={() => setIsDemoMode(false)}
-              style={{
-                padding: '0.35rem 0.75rem',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                borderRadius: '6px',
-                border: 'none',
-                cursor: 'pointer',
-                background: !isDemoMode ? '#66CC99' : 'transparent',
-                color: !isDemoMode ? '#FFFFFF' : '#8B949C',
-                boxShadow: !isDemoMode ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-              }}
-            >
-              Hardware Stream
-            </button>
+          <div style={{ display: 'flex', background: '#F7F9F8', border: '1px solid #E2E8E5', borderRadius: 8, padding: 3 }}>
+            <button type="button" onClick={() => setIsDemoMode(false)} style={{ padding: '0.4rem 0.75rem', borderRadius: 6, border: 0, background: !isDemoMode ? '#66CC99' : 'transparent', color: !isDemoMode ? '#fff' : '#8B949C', cursor: 'pointer' }}>Hardware Stream</button>
+            <button type="button" onClick={() => setIsDemoMode(true)} style={{ padding: '0.4rem 0.75rem', borderRadius: 6, border: 0, background: isDemoMode ? '#FBC000' : 'transparent', color: isDemoMode ? '#3F4A56' : '#8B949C', cursor: 'pointer' }}>Demo Simulation</button>
           </div>
 
-          {/* Demo Scenario Selector (visible only in demo mode) */}
           {isDemoMode && (
-            <select
-              value={demoScenario}
-              onChange={(e) => setDemoScenario(e.target.value)}
-              className="input-field"
-              style={{ width: 'auto', minWidth: '160px', borderColor: 'rgba(251,192,0,0.4)' }}
-            >
-              {demoScenarios.map((s) => (
-                <option key={s.key} value={s.key}>{s.label}</option>
-              ))}
+            <select value={demoScenario} onChange={(e) => setDemoScenario(e.target.value)} className="input-field" style={{ width: 'auto', minWidth: 160 }}>
+              {demoScenarios.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
             </select>
           )}
 
-          {/* Pause / Resume */}
-          <button
-            onClick={() => setIsPaused(!isPaused)}
-            className="btn-secondary"
-            style={{ padding: '0.5rem 0.875rem' }}
-            title={isPaused ? 'Resume Chart' : 'Pause Chart'}
-          >
-            {isPaused ? <Play size={16} /> : <Pause size={16} />}
-            <span>{isPaused ? 'Resume' : 'Pause'}</span>
+          <button type="button" onClick={() => setIsPaused(v => !v)} className="btn-secondary">
+            {isPaused ? <Play size={15} /> : <Pause size={15} />}
+            {isPaused ? 'Resume' : 'Pause'}
           </button>
         </div>
       </div>
 
-      {/* Active Alerts Bar (if any) */}
-      {activeAlerts.map((alert) => (
-        <AlertBanner key={alert.alert_id} alert={alert} />
-      ))}
+      {fallbackPolling && !isDemoMode && (
+        <div className="demo-banner">Live WebSocket unavailable — showing latest telemetry through polling fallback.</div>
+      )}
 
-      {/* Demo Mode Notice */}
-      {isDemoMode && (
-        <div className="demo-banner">
-          <AlertTriangle size={16} />
-          <span>
-            <strong>DEMO SIMULATION ACTIVE:</strong> Generating synthetic waveforms for scenario "
-            <strong>{demoScenarios.find(s => s.key === demoScenario)?.label || demoScenario}</strong>".
-            This data is simulated and not from a physical battery.
-          </span>
+      {activeAlerts.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {activeAlerts.map((alert) => <AlertBanner key={alert.alert_id} alert={alert} />)}
         </div>
       )}
 
-      {/* Real-time KPI Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
-        {/* Voltage */}
-        <div className="card metric-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">Pack Voltage</span>
-            <Zap size={18} color="#66CC99" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: '0.875rem' }}>
+        {[
+          ['Voltage', latestPacket?.voltage_v != null ? `${latestPacket.voltage_v.toFixed(1)} V` : '—', Zap],
+          ['Current', latestPacket?.current_a != null ? `${latestPacket.current_a.toFixed(1)} A` : '—', Activity],
+          ['Temperature', latestPacket?.temperature_c != null ? `${latestPacket.temperature_c.toFixed(1)} °C` : '—', Thermometer],
+          ['SOC', latestPacket?.soc_pct != null ? `${latestPacket.soc_pct.toFixed(1)}%` : '—', Activity],
+          ['Power', latestPacket?.power_w != null ? `${latestPacket.power_w.toFixed(0)} W` : '—', Zap],
+        ].map(([label, value, Icon]) => (
+          <div key={String(label)} className="card metric-card">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="section-title">{label}</span>
+              <Icon size={17} color="#66CC99" />
+            </div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#3F4A56', marginTop: 8 }}>{value}</div>
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#3F4A56', marginTop: '0.5rem' }}>
-            {latestPacket?.voltage_v !== undefined && latestPacket?.voltage_v !== null
-              ? `${latestPacket.voltage_v.toFixed(1)} V`
-              : '—'}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: '#8B949C', marginTop: '0.25rem' }}>
-            Rated: {selectedBattery?.rated_voltage_v || 400} V
+        ))}
+      </div>
+
+      <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontWeight: 700, color: '#3F4A56' }}>{selectedBattery?.battery_id || selectedBatteryId || 'No battery selected'}</div>
+          <div style={{ color: '#68737D', fontSize: '0.8rem', marginTop: 3 }}>
+            Source: <DataSourceBadge source={latestPacket?.source || (isDemoMode ? 'demo' : 'esp32')} />
+            {' '}• Last update: {latestPacket?.timestamp ? new Date(latestPacket.timestamp).toLocaleTimeString() : '—'}
           </div>
         </div>
-
-        {/* Current */}
-        <div className="card metric-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">Pack Current</span>
-            <Activity size={18} color="#0088CC" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#3F4A56', marginTop: '0.5rem' }}>
-            {latestPacket?.current_a !== undefined && latestPacket?.current_a !== null
-              ? `${latestPacket.current_a.toFixed(1)} A`
-              : '—'}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: latestPacket?.current_a && latestPacket.current_a < 0 ? '#FF633D' : '#4DBF88', marginTop: '0.25rem' }}>
-            {latestPacket?.bms_status || 'IDLE'}
-          </div>
-        </div>
-
-        {/* Power */}
-        <div className="card metric-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">Instant Power</span>
-            <Gauge size={18} color="#C89800" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#3F4A56', marginTop: '0.5rem' }}>
-            {latestPacket?.power_w !== undefined && latestPacket?.power_w !== null
-              ? `${(latestPacket.power_w / 1000).toFixed(2)} kW`
-              : '—'}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: '#8B949C', marginTop: '0.25rem' }}>
-            {latestPacket?.power_w ? `${latestPacket.power_w} W` : '0 W'}
-          </div>
-        </div>
-
-        {/* Temperature */}
-        <div className="card metric-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">Pack Temp</span>
-            <Thermometer size={18} color={latestPacket?.temperature_c && latestPacket.temperature_c > 45 ? '#FF633D' : '#4DBF88'} />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#3F4A56', marginTop: '0.5rem' }}>
-            {latestPacket?.temperature_c !== undefined && latestPacket?.temperature_c !== null
-              ? `${latestPacket.temperature_c.toFixed(1)} °C`
-              : '—'}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: '#8B949C', marginTop: '0.25rem' }}>
-            Min {latestPacket?.min_cell_temp_c || '—'}° / Max {latestPacket?.max_cell_temp_c || '—'}°
-          </div>
-        </div>
-
-        {/* State of Charge (SOC) */}
-        <div className="card metric-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">State of Charge</span>
-            <BatteryIcon size={18} color="#66CC99" />
-          </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#3F4A56', marginTop: '0.5rem' }}>
-            {latestPacket?.soc_pct !== undefined && latestPacket?.soc_pct !== null
-              ? `${latestPacket.soc_pct.toFixed(0)}%`
-              : '—'}
-          </div>
-          {/* SOC Bar */}
-          <div style={{ width: '100%', height: '6px', backgroundColor: '#F7F9F8', borderRadius: '3px', marginTop: '0.5rem', overflow: 'hidden', border: '1px solid #E2E8E5' }}>
-            <div style={{ width: `${latestPacket?.soc_pct || 0}%`, height: '100%', backgroundColor: '#66CC99', borderRadius: '3px', transition: 'width 0.3s' }} />
-          </div>
-        </div>
-
-        {/* Quality & Source */}
-        <div className="card metric-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="section-title">Data Ingest</span>
-            <ShieldCheck size={18} color="#66CC99" />
-          </div>
-          <div style={{ marginTop: '0.5rem' }}>
-            <DataSourceBadge source={latestPacket?.source || (isDemoMode ? 'demo' : 'esp32')} />
-          </div>
-          <div style={{ fontSize: '0.75rem', color: '#8B949C', marginTop: '0.4rem' }}>
-            Quality Score: <strong>{latestPacket?.data_quality_score ?? 100}%</strong>
-          </div>
+        <div style={{ color: isLiveConnected ? '#4DBF88' : '#8B949C', fontWeight: 600, fontSize: '0.8rem' }}>
+          {isDemoMode ? 'SIMULATION' : isLiveConnected ? 'LIVE CONNECTION' : 'OFFLINE / FALLBACK'}
         </div>
       </div>
 
-      {/* Main Charts Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))', gap: '1.25rem' }}>
-        {/* Voltage Chart */}
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <div>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#3F4A56' }}>Pack Voltage (V)</h3>
-              <p style={{ fontSize: '0.75rem', color: '#8B949C' }}>High frequency real-time potential stream</p>
-            </div>
-            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#66CC99' }}>
-              {latestPacket?.voltage_v?.toFixed(1) ?? '—'} V
-            </span>
-          </div>
-          <LiveChart data={voltageSeries} dataKey="voltage" name="Voltage" unit="V" color="#66CC99" />
-        </div>
-
-        {/* Current Chart */}
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <div>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#3F4A56' }}>Current Flow (A)</h3>
-              <p style={{ fontSize: '0.75rem', color: '#8B949C' }}>Discharge (-) and Charge (+) current</p>
-            </div>
-            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0088CC' }}>
-              {latestPacket?.current_a?.toFixed(1) ?? '—'} A
-            </span>
-          </div>
-          <LiveChart data={currentSeries} dataKey="current" name="Current" unit="A" color="#0088CC" />
-        </div>
-
-        {/* Temperature Chart */}
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <div>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#3F4A56' }}>Thermal Profile (°C)</h3>
-              <p style={{ fontSize: '0.75rem', color: '#8B949C' }}>Pack thermocouple temperature</p>
-            </div>
-            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF633D' }}>
-              {latestPacket?.temperature_c?.toFixed(1) ?? '—'} °C
-            </span>
-          </div>
-          <LiveChart data={tempSeries} dataKey="temperature" name="Temp" unit="°C" color="#FF633D" />
-        </div>
-
-        {/* State of Charge Chart */}
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <div>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#3F4A56' }}>SOC Trajectory (%)</h3>
-              <p style={{ fontSize: '0.75rem', color: '#8B949C' }}>Coulomb counted State of Charge</p>
-            </div>
-            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#C89800' }}>
-              {latestPacket?.soc_pct?.toFixed(0) ?? '—'}%
-            </span>
-          </div>
-          <LiveChart data={socSeries} dataKey="soc" name="SOC" unit="%" color="#FBC000" yDomain={[0, 100]} />
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div className="card"><div className="section-title" style={{ marginBottom: 8 }}>Voltage</div><LiveChart data={voltageSeries} dataKey="voltage" label="Voltage (V)" /></div>
+        <div className="card"><div className="section-title" style={{ marginBottom: 8 }}>Current</div><LiveChart data={currentSeries} dataKey="current" label="Current (A)" /></div>
+        <div className="card"><div className="section-title" style={{ marginBottom: 8 }}>Temperature</div><LiveChart data={tempSeries} dataKey="temperature" label="Temperature (°C)" /></div>
+        <div className="card"><div className="section-title" style={{ marginBottom: 8 }}>SOC</div><LiveChart data={socSeries} dataKey="soc" label="SOC (%)" /></div>
       </div>
 
-      {/* Cell Voltage Section */}
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <div>
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#3F4A56' }}>Cell-Level Voltage Matrix</h3>
-            <p style={{ fontSize: '0.8125rem', color: '#8B949C' }}>
-              Individual series cell voltage balance & delta analysis
-            </p>
-          </div>
-        </div>
-        <CellVoltageGrid cellVoltages={latestPacket?.cell_voltages} />
-      </div>
+      {latestPacket?.cell_voltages && latestPacket.cell_voltages.length > 1 && (
+        <div className="card"><div className="section-title" style={{ marginBottom: 10 }}>Cell Voltage Monitoring</div><CellVoltageGrid voltages={latestPacket.cell_voltages} /></div>
+      )}
     </div>
   );
 }

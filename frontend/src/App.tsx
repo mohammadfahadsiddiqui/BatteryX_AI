@@ -4,7 +4,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AppLayout from './components/layout/AppLayout';
 
-// Existing Pages
 import LandingPage from './pages/LandingPage';
 import TechnologyPage from './pages/TechnologyPage';
 import LoginPage from './pages/auth/LoginPage';
@@ -19,8 +18,6 @@ import VerifyPage from './pages/VerifyPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AuditLogsPage from './pages/admin/AuditLogsPage';
 import SettingsPage from './pages/SettingsPage';
-
-// New v3.0 Pages
 import { LiveMonitorPage } from './pages/LiveMonitorPage';
 import { HardwareCenterPage } from './pages/hardware/HardwareCenterPage';
 import { HardwareDeviceDetailPage } from './pages/hardware/HardwareDeviceDetailPage';
@@ -39,91 +36,46 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
+function Protected({ children }: { children: React.ReactNode }) {
+  return <PrivateRoute><AppLayout>{children}</AppLayout></PrivateRoute>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
-      {/* Public Routes */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<LandingPage />} />
       <Route path="/technology" element={<TechnologyPage />} />
       <Route path="/about" element={<TechnologyPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify/:certificateId" element={<VerifyPage />} />
 
-      {/* Protected App Pages */}
-      <Route path="/dashboard" element={
-        <PrivateRoute><AppLayout><DashboardPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/batteries" element={
-        <PrivateRoute><AppLayout><BatteryInventoryPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/batteries/add" element={
-        <PrivateRoute><AppLayout><AddBatteryPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/batteries/:id" element={
-        <PrivateRoute><AppLayout><BatteryDetailsPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/compare" element={
-        <PrivateRoute><AppLayout><BatteryComparisonPage /></AppLayout></PrivateRoute>
-      } />
+      <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
+      <Route path="/batteries" element={<Protected><BatteryInventoryPage /></Protected>} />
+      <Route path="/batteries/add" element={<Protected><AddBatteryPage /></Protected>} />
+      <Route path="/batteries/:id" element={<Protected><BatteryDetailsPage /></Protected>} />
+      <Route path="/compare" element={<Protected><BatteryComparisonPage /></Protected>} />
 
-      {/* Live & Hardware */}
-      <Route path="/live-monitor" element={
-        <PrivateRoute><AppLayout><LiveMonitorPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/hardware" element={
-        <PrivateRoute><AppLayout><HardwareCenterPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/hardware/:id" element={
-        <PrivateRoute><AppLayout><HardwareDeviceDetailPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/bms" element={
-        <PrivateRoute><AppLayout><BMSManagerPage /></AppLayout></PrivateRoute>
-      } />
+      <Route path="/live-monitor" element={<Protected><LiveMonitorPage /></Protected>} />
+      <Route path="/hardware" element={<Protected><HardwareCenterPage /></Protected>} />
+      <Route path="/hardware/:id" element={<Protected><HardwareDeviceDetailPage /></Protected>} />
+      <Route path="/bms" element={<Protected><BMSManagerPage /></Protected>} />
 
-      {/* Diagnostics & AI */}
-      <Route path="/diagnostics" element={
-        <PrivateRoute><AppLayout><DiagnosticsPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/diagnostics/new" element={
-        <PrivateRoute><AppLayout><NewDiagnosticPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/ai-intelligence" element={
-        <PrivateRoute><AppLayout><AIIntelligencePage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/lifecycle" element={
-        <PrivateRoute><AppLayout><LifecyclePage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/maintenance" element={
-        <PrivateRoute><AppLayout><MaintenancePage /></AppLayout></PrivateRoute>
-      } />
+      <Route path="/diagnostics" element={<Protected><DiagnosticsPage /></Protected>} />
+      <Route path="/diagnostics/new" element={<Protected><NewDiagnosticPage /></Protected>} />
+      <Route path="/ai-intelligence" element={<Protected><AIIntelligencePage /></Protected>} />
+      <Route path="/lifecycle" element={<Protected><LifecyclePage /></Protected>} />
+      <Route path="/maintenance" element={<Protected><MaintenancePage /></Protected>} />
 
-      {/* Operations & Records */}
-      <Route path="/fleet" element={
-        <PrivateRoute><AppLayout><FleetPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/alerts" element={
-        <PrivateRoute><AppLayout><AlertsPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/certificates" element={
-        <PrivateRoute><AppLayout><CertificatesPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/reports" element={
-        <PrivateRoute><AppLayout><ReportsPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/settings" element={
-        <PrivateRoute><AppLayout><SettingsPage /></AppLayout></PrivateRoute>
-      } />
+      <Route path="/fleet" element={<Protected><FleetPage /></Protected>} />
+      <Route path="/alerts" element={<Protected><AlertsPage /></Protected>} />
+      <Route path="/certificates" element={<Protected><CertificatesPage /></Protected>} />
+      <Route path="/reports" element={<Protected><ReportsPage /></Protected>} />
+      <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
 
-      {/* Admin */}
-      <Route path="/admin/users" element={
-        <PrivateRoute><AppLayout><AdminUsersPage /></AppLayout></PrivateRoute>
-      } />
-      <Route path="/admin/audit-logs" element={
-        <PrivateRoute><AppLayout><AuditLogsPage /></AppLayout></PrivateRoute>
-      } />
+      <Route path="/admin/users" element={<Protected><AdminUsersPage /></Protected>} />
+      <Route path="/admin/audit-logs" element={<Protected><AuditLogsPage /></Protected>} />
 
-      {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

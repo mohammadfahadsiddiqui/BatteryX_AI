@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.db.models import Battery, BatteryAlert, DeviceTelemetry, HardwareDevice, User
+from app.db.models import Battery, BatteryAlert, BatteryReading, DeviceTelemetry, HardwareDevice, User
 from app.db.session import get_db
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
@@ -282,6 +282,38 @@ def ingest_batch(req: BatchTelemetryRequest, db: Session = Depends(get_db)):
     return {"ingested": len(results), "errors": errors, "results": results}
 
 
+def _manual_reading_to_telemetry(battery: Battery, reading: BatteryReading) -> dict:
+    power_w = None
+    if reading.voltage_v is not None and reading.current_a is not None:
+        power_w = round(reading.voltage_v * reading.current_a, 2)
+    return {
+        "id": reading.id,
+        "battery_id": battery.battery_id,
+        "timestamp": reading.timestamp,
+        "voltage_v": reading.voltage_v,
+        "current_a": reading.current_a,
+        "power_w": power_w,
+        "energy_wh": None,
+        "temperature_c": reading.temperature_c,
+        "min_cell_temp_c": None,
+        "max_cell_temp_c": None,
+        "soc_pct": reading.soc_pct,
+        "soh_pct": None,
+        "internal_resistance_mohm": reading.internal_resistance_mohm,
+        "cycle_count": battery.cycle_count,
+        "cell_voltages": None,
+        "cell_temperatures": None,
+        "bms_status": "MANUAL_READING",
+        "fault_codes": [],
+        "charging_state": None,
+        "discharging_state": None,
+        "source": reading.source or "manual",
+        "firmware_version": None,
+        "data_quality_score": 100.0,
+        "is_demo": False,
+    }
+
+
 @router.get("/{battery_id}/latest")
 def get_latest_telemetry(
     battery_id: str,
@@ -295,34 +327,47 @@ def get_latest_telemetry(
         .order_by(DeviceTelemetry.timestamp.desc())
         .first()
     )
-    if not record:
-        return None
-    return {
-        "id": record.id,
-        "battery_id": battery.battery_id,
-        "timestamp": record.timestamp,
-        "voltage_v": record.voltage_v,
-        "current_a": record.current_a,
-        "power_w": record.power_w,
-        "energy_wh": record.energy_wh,
-        "temperature_c": record.temperature_c,
-        "min_cell_temp_c": record.min_cell_temp_c,
-        "max_cell_temp_c": record.max_cell_temp_c,
-        "soc_pct": record.soc_pct,
-        "soh_pct": record.soh_pct,
-        "internal_resistance_mohm": record.internal_resistance_mohm,
-        "cycle_count": record.cycle_count,
-        "cell_voltages": record.cell_voltages,
-        "cell_temperatures": record.cell_temperatures,
-        "bms_status": record.bms_status,
-        "fault_codes": record.fault_codes,
-        "charging_state": record.charging_state,
-        "discharging_state": record.discharging_state,
-        "source": record.source,
-        "firmware_version": record.firmware_version,
-        "data_quality_score": record.data_quality_score,
-        "is_demo": record.is_demo,
-    }
+    if record:
+        return {
+            "id": record.id,
+            "battery_id": battery.battery_id,
+            "timestamp": record.timestamp,
+            "voltage_v": record.voltage_v,
+            "current_a": record.current_a,
+            "power_w": record.power_w,
+            "energy_wh": record.energy_wh,
+            "temperature_c": record.temperature_c,
+            "min_cell_temp_c": record.min_cell_temp_c,
+            "max_cell_temp_c": record.max_cell_temp_c,
+            "soc_pct": record.soc_pct,
+            "soh_pct": record.soh_pct,
+            "internal_resistance_mohm": record.internal_resistance_mohm,
+            "cycle_count": record.cycle_count,
+            "cell_voltages": record.cell_voltages,
+            "cell_temperatures": record.cell_temperatures,
+            "bms_status": record.bms_status,
+            "fault_codes": record.fault_codes,
+            "charging_state": record.charging_state,
+            "discharging_state": record.discharging_state,
+            "source": record.source,
+            "firmware_version": record.firmware_version,
+            "data_quality_score": record.data_quality_score,
+            "is_demo": record.is_demo,
+        }
+
+    # The application also supports manual battery analysis. If no ESP32/BMS
+    # packet has arrived yet, expose the latest manual reading through the
+    # same Live Monitor contract so the dashboard is never needlessly blank.
+    manual = (
+        db.query(BatteryReading)
+        .filter(BatteryReading.battery_id == battery.id)
+        .order_by(BatteryReading.timestamp.desc())
+        .first()
+    )
+    if manual:
+        return _manual_reading_to_telemetry(battery, manual)
+
+    return None
 
 
 @router.get("/{battery_id}/history")

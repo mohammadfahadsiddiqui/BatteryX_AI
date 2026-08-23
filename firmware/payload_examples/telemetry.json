@@ -1,0 +1,26 @@
+{
+  "device_id": "ESP32-LAB-NODE-01",
+  "battery_id": "BX-2026-00124",
+  "timestamp": "2026-08-23T12:00:00Z",
+  "voltage_v": 398.4,
+  "current_a": -12.5,
+  "power_w": -4980.0,
+  "temperature_c": 28.4,
+  "min_cell_temp_c": 27.1,
+  "max_cell_temp_c": 29.3,
+  "soc_pct": 74.0,
+  "soh_pct": 92.4,
+  "internal_resistance_mohm": 9.2,
+  "cycle_count": 142,
+  "cell_voltages": [
+    3.712, 3.715, 3.710, 3.714, 3.711, 3.713,
+    3.716, 3.712, 3.710, 3.715, 3.712, 3.713
+  ],
+  "bms_status": "DISCHARGING",
+  "fault_codes": [],
+  "charging_state": false,
+  "discharging_state": true,
+  "source": "esp32",
+  "firmware_version": "v3.0.0-esp32",
+  "is_demo": false
+}

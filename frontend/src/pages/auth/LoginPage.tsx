@@ -114,10 +114,6 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
-
-        <p style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-          <Link to="/" style={{ color: 'var(--color-text-muted)', textDecoration: 'none' }}>← Back to home</Link>
-        </p>
       </div>
     </div>
   );

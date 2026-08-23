@@ -1,14 +1,14 @@
 // BatteryX AI – Add Battery Page
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, ArrowLeft, Upload, CheckCircle, AlertCircle } from 'lucide-react';
+import { Plus, ArrowLeft, Upload, CheckCircle, AlertCircle, Edit2, Activity, Cpu } from 'lucide-react';
 import { batteryApi } from '../../services/api';
-
 
 const CHEMISTRY_OPTIONS = ['Li-ion NMC', 'LFP', 'Li-ion NCA', 'NMC 811', 'NMC 622'];
 
 export default function AddBatteryPage() {
   const navigate = useNavigate();
+  const [selectedMode, setSelectedMode] = useState<'manual' | 'live' | 'import' | null>(null);
   const [form, setForm] = useState({
     battery_id: '', manufacturer: '', model: '', chemistry: 'Li-ion NMC',
     rated_capacity_ah: '', rated_voltage_v: '', age_years: '', cycle_count: '',
@@ -39,9 +39,17 @@ export default function AddBatteryPage() {
         installation_date: form.installation_date || undefined,
         notes: form.notes || undefined,
       };
-      const result = await batteryApi.create(payload);
+      await batteryApi.create(payload);
       setSuccess(`Battery ${form.battery_id} added successfully!`);
-      setTimeout(() => navigate(`/batteries/${form.battery_id}`), 1500);
+      
+      // Route based on intent
+      setTimeout(() => {
+        if (selectedMode === 'live') {
+          navigate(`/hardware`); // Go connect hardware
+        } else {
+          navigate(`/batteries/${form.battery_id}`);
+        }
+      }, 1500);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to add battery');
     } finally { setLoading(false); }
@@ -54,15 +62,100 @@ export default function AddBatteryPage() {
     </div>
   );
 
+  // Selector View
+  if (!selectedMode) {
+    return (
+      <div style={{ maxWidth: 900, margin: '0 auto', paddingTop: '2rem' }}>
+        <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+          <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--color-text-primary)' }}>Unified Battery Analysis</h1>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '1.1rem', maxWidth: 600, margin: '0 auto' }}>
+            BatteryX supports both manual and live battery analysis inside the same application using the unified analysis engine.
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
+          {/* Manual Analysis Option */}
+          <div 
+            className="card" 
+            style={{ cursor: 'pointer', transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '2rem 1.5rem', border: '2px solid transparent' }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--color-primary)'}
+            onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
+            onClick={() => setSelectedMode('manual')}
+          >
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(102,204,153,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem', color: 'var(--color-primary)' }}>
+              <Edit2 size={32} />
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>Manual Analysis</h3>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Analyze battery health using manually entered specifications and measurements.</p>
+            <div style={{ marginTop: '1.5rem', display: 'inline-flex', alignItems: 'center', padding: '0.25rem 0.75rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700, background: '#F1F5F9', color: '#64748B' }}>
+              MANUAL BADGE
+            </div>
+          </div>
+
+          {/* Live Analysis Option */}
+          <div 
+            className="card" 
+            style={{ cursor: 'pointer', transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '2rem 1.5rem', border: '2px solid transparent' }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--color-primary)'}
+            onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
+            onClick={() => setSelectedMode('live')}
+          >
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(255,99,61,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem', color: '#FF633D' }}>
+              <Activity size={32} />
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>Live Analysis</h3>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Analyze a battery using real-time hardware, CAN, or BMS telemetry.</p>
+            <div style={{ marginTop: '1.5rem', display: 'inline-flex', alignItems: 'center', padding: '0.25rem 0.75rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700, background: 'rgba(102,204,153,0.18)', color: '#2E9F68' }}>
+              LIVE BADGE
+            </div>
+          </div>
+
+          {/* Import Data Option */}
+          <div 
+            className="card" 
+            style={{ cursor: 'pointer', transition: 'all 0.2s', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '2rem 1.5rem', border: '2px solid transparent' }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--color-primary)'}
+            onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
+            onClick={() => setSelectedMode('import')}
+          >
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(251,192,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem', color: '#FBC000' }}>
+              <Upload size={32} />
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>Import Data</h3>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Analyze historical battery telemetry uploaded from a CSV or JSON file.</p>
+            <div style={{ marginTop: '1.5rem', display: 'inline-flex', alignItems: 'center', padding: '0.25rem 0.75rem', borderRadius: 999, fontSize: '0.75rem', fontWeight: 700, background: '#F1F5F9', color: '#64748B' }}>
+              IMPORTED BADGE
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Form View (Manual / Live Registration)
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
       {/* Header */}
       <div style={{ marginBottom: '1.5rem' }}>
-        <Link to="/batteries" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', color: 'var(--color-text-muted)', textDecoration: 'none', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
-          <ArrowLeft size={15} />Back to Inventory
-        </Link>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: 4 }}>Add New Battery</h1>
-        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Enter battery metadata to register it in the BatteryX AI platform</p>
+        <button onClick={() => setSelectedMode(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.375rem', color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.75rem', padding: 0 }}>
+          <ArrowLeft size={15} />Back to Mode Selection
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: 4 }}>
+            {selectedMode === 'manual' ? 'Manual Battery Registration' : selectedMode === 'import' ? 'Import Battery Data' : 'Live Hardware Registration'}
+          </h1>
+          {selectedMode === 'live' && (
+            <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: 999, background: 'rgba(102,204,153,0.18)', color: '#2E9F68' }}>LIVE</span>
+          )}
+          {selectedMode === 'manual' && (
+            <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: 999, background: '#F1F5F9', color: '#64748B' }}>MANUAL</span>
+          )}
+        </div>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+          {selectedMode === 'import' 
+            ? 'First create the battery profile, then upload historical telemetry files on the battery details page.' 
+            : 'Enter battery metadata to register it in the BatteryX AI platform before analysis.'}
+        </p>
       </div>
 
       {success && (
@@ -141,12 +234,19 @@ export default function AddBatteryPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <Link to="/batteries" className="btn-secondary">Cancel</Link>
+          <button type="button" onClick={() => setSelectedMode(null)} className="btn-secondary">Cancel</button>
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? <><div className="spinner" style={{ width: 16, height: 16 }} />Adding...</> : <><Plus size={16} />Add Battery</>}
+            {loading ? (
+              <><div className="spinner" style={{ width: 16, height: 16 }} />Saving...</>
+            ) : (
+              selectedMode === 'live' ? <><Cpu size={16} />Create & Link Hardware</> : 
+              selectedMode === 'import' ? <><Upload size={16} />Create & Import Data</> : 
+              <><Plus size={16} />Create Profile</>
+            )}
           </button>
         </div>
       </form>
     </div>
   );
 }
+

@@ -1,6 +1,7 @@
 """BatteryX AI – Certificate API routes"""
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,62 @@ from app.api.deps import get_current_user
 from app.services.certificate.generator import generate_certificate_id, generate_certificate_pdf, generate_qr_code
 
 router = APIRouter(prefix="/certificates", tags=["Certificates"])
+
+
+def _cert_dict(c: Certificate, db: Session) -> dict:
+    battery = db.query(Battery).filter(Battery.id == c.battery_id).first()
+    return {
+        "id": c.id,
+        "certificate_id": c.certificate_id,
+        "battery_id": c.battery_id,
+        "battery_id_str": battery.battery_id if battery else "Unknown",
+        "battery_manufacturer": battery.manufacturer if battery else None,
+        "battery_model": battery.model if battery else None,
+        "soh_pct": c.soh_pct,
+        "rul_years": c.rul_years,
+        "risk_level": c.risk_level,
+        "second_life_classification": c.second_life_classification,
+        "recommended_application": c.recommended_application,
+        "cycle_count": c.cycle_count,
+        "assessment_summary": c.assessment_summary,
+        "issued_at": c.issued_at,
+        "valid_until": c.valid_until,
+        "is_valid": c.is_valid,
+        "pdf_path": c.pdf_path,
+    }
+
+
+@router.get("", response_model=List[dict])
+def list_certificates(
+    search: Optional[str] = None,
+    risk: Optional[str] = None,
+    second_life: Optional[str] = None,
+    is_valid: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all certificates across batteries."""
+    q = db.query(Certificate)
+    if is_valid is not None:
+        q = q.filter(Certificate.is_valid == is_valid)
+    if risk:
+        q = q.filter(Certificate.risk_level == risk)
+    if second_life:
+        q = q.filter(Certificate.second_life_classification == second_life)
+
+    certs = q.order_by(Certificate.issued_at.desc()).offset(skip).limit(limit).all()
+    results = [_cert_dict(c, db) for c in certs]
+    if search:
+        s = search.lower()
+        results = [
+            r for r in results
+            if s in r["certificate_id"].lower()
+            or s in (r["battery_id_str"] or "").lower()
+            or s in (r["battery_manufacturer"] or "").lower()
+        ]
+    return results
 
 
 @router.post("/{battery_id}", response_model=CertificateResponse, status_code=201)
@@ -75,6 +132,28 @@ def get_certificate(
     if not cert:
         raise HTTPException(status_code=404, detail="Certificate not found")
     return cert
+
+
+@router.post("/{certificate_id}/revoke")
+def revoke_certificate(
+    certificate_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    cert = db.query(Certificate).filter(Certificate.certificate_id == certificate_id).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    cert.is_valid = False
+    log = AuditLog(
+        user_id=current_user.id,
+        action="certificate.revoked",
+        resource_type="certificate",
+        resource_id=certificate_id,
+    )
+    db.add(log)
+    db.commit()
+    return {"message": f"Certificate {certificate_id} revoked"}
 
 
 @router.get("/{certificate_id}/pdf")

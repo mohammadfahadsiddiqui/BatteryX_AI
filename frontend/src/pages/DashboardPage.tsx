@@ -70,6 +70,8 @@ export default function DashboardPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <Link to="/live-monitor" className="btn-secondary"><Activity size={16} />Live Monitor</Link>
+          <Link to="/diagnostics/new" className="btn-secondary"><TrendingUp size={16} />New Diagnostic</Link>
           <Link to="/batteries/add" className="btn-primary"><Plus size={16} />Add Battery</Link>
         </div>
       </div>

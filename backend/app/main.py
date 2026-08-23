@@ -1,20 +1,30 @@
-"""BatteryX AI – FastAPI application entry point"""
-from fastapi import FastAPI, Request
+"""BatteryX AI – FastAPI application entry point (v3.0)"""
+import asyncio
+import json
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+# Existing routers
 from app.api.v1 import auth, batteries, analysis, certificates, dashboard, admin
+# New v3.0 routers
+from app.api.v1 import hardware, telemetry, diagnostics, alerts, lifecycle, fleet, bms
+# WebSocket manager
+from app.websocket.manager import ws_manager
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    description="Intelligent EV Battery Health Assessment & Second-Life Certification Platform",
+    version="3.0.0",
+    description=(
+        "BatteryX AI — Intelligent EV Battery Management, Health Assessment, "
+        "Diagnostics, Lifecycle and Second-Life Certification Platform"
+    ),
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
 
-# CORS
+# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global fallback exception handler
+# ── Global exception handler ──────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -31,19 +41,84 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"Internal Server Error: {str(exc)}", "type": type(exc).__name__},
     )
 
-# Routers – mounted with both /api/v1 and /v1 for seamless Vercel / local routing
+# ── Routers ───────────────────────────────────────────────────────────────────
 for prefix in ("/api/v1", "/v1"):
-    app.include_router(auth.router, prefix=prefix)
-    app.include_router(batteries.router, prefix=prefix)
-    app.include_router(analysis.router, prefix=prefix)
+    # Existing
+    app.include_router(auth.router,         prefix=prefix)
+    app.include_router(batteries.router,    prefix=prefix)
+    app.include_router(analysis.router,     prefix=prefix)
     app.include_router(certificates.router, prefix=prefix)
-    app.include_router(dashboard.router, prefix=prefix)
-    app.include_router(admin.router, prefix=prefix)
+    app.include_router(dashboard.router,    prefix=prefix)
+    app.include_router(admin.router,        prefix=prefix)
+    # New v3.0
+    app.include_router(hardware.router,     prefix=prefix)
+    app.include_router(telemetry.router,    prefix=prefix)
+    app.include_router(diagnostics.router,  prefix=prefix)
+    app.include_router(alerts.router,       prefix=prefix)
+    app.include_router(lifecycle.router,    prefix=prefix)
+    app.include_router(fleet.router,        prefix=prefix)
+    app.include_router(bms.router,          prefix=prefix)
 
 
+# ── WebSocket endpoint ────────────────────────────────────────────────────────
+@app.websocket("/ws/{battery_id}")
+async def websocket_endpoint(websocket: WebSocket, battery_id: str):
+    """
+    Real-time telemetry WebSocket channel for a specific battery.
+    Clients connect to ws://host/ws/{battery_id} and receive telemetry_update events.
+    """
+    await ws_manager.connect(websocket, battery_id)
+    try:
+        # Send a connection confirmation
+        await websocket.send_text(json.dumps({
+            "event": "battery_connected",
+            "battery_id": battery_id,
+            "message": "Connected to BatteryX live telemetry",
+        }))
+        # Keep connection alive, handle incoming heartbeat pings
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                msg = json.loads(data) if data else {}
+                if msg.get("type") == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+            except asyncio.TimeoutError:
+                # Send heartbeat to keep connection alive
+                await websocket.send_text(json.dumps({"type": "heartbeat"}))
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, battery_id)
+    except Exception:
+        ws_manager.disconnect(websocket, battery_id)
+
+
+# ── Demo telemetry endpoint ───────────────────────────────────────────────────
+@app.get("/api/v1/demo/scenarios")
+@app.get("/v1/demo/scenarios")
+def get_demo_scenarios():
+    """List available demo scenarios."""
+    from app.services.demo.generator import get_scenario_list
+    return get_scenario_list()
+
+
+@app.get("/api/v1/demo/telemetry/{battery_id}")
+@app.get("/v1/demo/telemetry/{battery_id}")
+def get_demo_telemetry(
+    battery_id: str,
+    scenario: str = "healthy",
+    tick: int = 0,
+):
+    """
+    Generate a single demo telemetry packet.
+    DEMO DATA — not real battery measurements.
+    """
+    from app.services.demo.generator import generate_demo_telemetry
+    return generate_demo_telemetry(battery_id, scenario=scenario, tick=tick)
+
+
+# ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    """Seed the database with demo data on first run."""
+    """Initialise database on first run."""
     try:
         from app.db.session import init_db
         init_db()
@@ -51,17 +126,19 @@ async def startup():
         print(f"Startup notice: {e}")
 
 
+# ── Health & Root ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
+    return {"status": "ok", "app": settings.APP_NAME, "version": "3.0.0"}
 
 
 @app.get("/api")
 @app.get("/")
 def root():
     return {
-        "message": f"Welcome to {settings.APP_NAME} API",
+        "message": f"Welcome to {settings.APP_NAME} API v3.0",
         "docs": "/api/docs",
-        "version": settings.APP_VERSION,
+        "version": "3.0.0",
+        "websocket": "ws://host/ws/{battery_id}",
     }

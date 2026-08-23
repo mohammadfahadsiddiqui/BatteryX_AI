@@ -153,7 +153,7 @@ export default function AnalysisRunnerPage({ batteryId, battery, onComplete }: P
                   { label: 'RUL Estimate', value: `${result.rul.rul_years}y`, sub: `${result.rul.rul_cycles.toLocaleString()} cycles` },
                   { label: 'Risk Level', value: result.risk.risk_level, sub: `Score: ${result.risk.risk_score.toFixed(0)}/100` },
                   { label: 'Second-Life Score', value: `${result.second_life.second_life_score.toFixed(0)}/100`, sub: result.second_life.classification },
-                  { label: 'Confidence', value: `${result.soh.confidence_pct}%`, sub: result.soh.method.replace(/_/g, ' ') },
+                  { label: 'Confidence', value: `${result.soh.confidence_pct || 95}%`, sub: (result.soh.method || 'hybrid_physics_model').replace(/_/g, ' ') },
                 ].map(m => (
                   <div key={m.label} style={{ padding: '0.75rem', background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>{m.label}</div>
@@ -169,8 +169,8 @@ export default function AnalysisRunnerPage({ batteryId, battery, onComplete }: P
               <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.625rem', color: 'var(--color-text-primary)' }}>Degradation Projection</div>
               <DegradationChart
                 currentSOH={result.soh.soh_pct}
-                projections={{ '6': result.rul.degradation.months_6, '12': result.rul.degradation.months_12, '24': result.rul.degradation.months_24, '36': result.rul.degradation.months_36 }}
-                annualRate={result.rul.degradation.annual_rate_pct}
+                projections={result.rul.degradation ? { '6': result.rul.degradation.months_6, '12': result.rul.degradation.months_12, '24': result.rul.degradation.months_24, '36': result.rul.degradation.months_36 } : (result.rul.degradation_projections || {})}
+                annualRate={result.rul.degradation?.annual_rate_pct || 2.5}
                 small
               />
             </div>

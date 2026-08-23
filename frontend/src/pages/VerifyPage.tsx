@@ -70,7 +70,7 @@ export default function VerifyPage() {
                     {data.is_valid ? 'Certificate Valid' : 'Certificate Invalid'}
                   </div>
                   <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                    Verified at {new Date(data.verified_at).toLocaleString()}
+                    Verified at {new Date(data.verified_at || Date.now()).toLocaleString()}
                   </div>
                 </div>
               </div>

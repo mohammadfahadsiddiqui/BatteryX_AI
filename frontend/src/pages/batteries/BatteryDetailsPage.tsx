@@ -13,15 +13,17 @@ import RiskBadge from '../../components/ui/RiskBadge';
 import AnalysisRunnerPage from '../AnalysisRunnerPage';
 import { getSOHColor, getRiskColor, getSecondLifeBadgeClass, formatDate, formatNumber } from '../../utils/helpers';
 
-type Tab = 'overview' | 'telemetry' | 'analysis' | 'degradation' | 'safety' | 'second-life' | 'certificate';
+type Tab = 'overview' | 'analysis' | 'degradation' | 'safety' | 'second-life' | 'certificate' | 'live' | 'lifecycle';
 
 const TABS: { key: Tab; label: string; icon: any }[] = [
   { key: 'overview', label: 'Overview', icon: Battery },
   { key: 'analysis', label: 'AI Analysis', icon: BarChart3 },
-  { key: 'degradation', label: 'Degradation', icon: Activity },
+  { key: 'live', label: 'Live Telemetry', icon: Activity },
+  { key: 'degradation', label: 'Degradation', icon: Zap },
   { key: 'safety', label: 'Safety Risk', icon: Shield },
   { key: 'second-life', label: 'Second-Life', icon: Recycle },
-  { key: 'certificate', label: 'Certificate', icon: Award },
+  { key: 'lifecycle', label: 'Lifecycle Timeline', icon: Award },
+  { key: 'certificate', label: 'Certificate', icon: FileText },
 ];
 
 export default function BatteryDetailsPage() {
@@ -191,7 +193,16 @@ export default function BatteryDetailsPage() {
           setAnalysis({
             battery_id: result.battery_id,
             soh: result.soh,
-            rul: { rul_years: result.rul.rul_years, rul_cycles: result.rul.rul_cycles, degradation_projections: { '6': result.rul.degradation.months_6, '12': result.rul.degradation.months_12, '24': result.rul.degradation.months_24, '36': result.rul.degradation.months_36 } },
+            rul: {
+              rul_years: result.rul.rul_years,
+              rul_cycles: result.rul.rul_cycles,
+              degradation_projections: result.rul.degradation ? {
+                '6': result.rul.degradation.months_6,
+                '12': result.rul.degradation.months_12,
+                '24': result.rul.degradation.months_24,
+                '36': result.rul.degradation.months_36,
+              } : (result.rul.degradation_projections || {}),
+            },
             risk: { risk_score: result.risk.risk_score, risk_level: result.risk.risk_level, risk_factors: result.risk.risk_factors, recommended_action: result.risk.recommended_action },
             second_life: result.second_life,
           });
@@ -289,6 +300,36 @@ export default function BatteryDetailsPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {tab === 'live' && (
+        <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
+          <Activity size={48} color="#66CC99" style={{ margin: '0 auto 1rem' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#3F4A56', marginBottom: '0.5rem' }}>
+            Real-Time Stream for {battery.battery_id}
+          </h3>
+          <p style={{ fontSize: '0.875rem', color: '#68737D', maxWidth: 460, margin: '0 auto 1.5rem' }}>
+            Open the dedicated Live Monitor workspace to observe high-frequency telemetry, cell-level matrices, and simulated failure scenarios.
+          </p>
+          <Link to={`/live-monitor?battery=${battery.battery_id}`} className="btn-primary">
+            <Activity size={16} /> Open Full Live Telemetry Monitor
+          </Link>
+        </div>
+      )}
+
+      {tab === 'lifecycle' && (
+        <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
+          <Award size={48} color="#66CC99" style={{ margin: '0 auto 1rem' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#3F4A56', marginBottom: '0.5rem' }}>
+            Provenance & Lifecycle History
+          </h3>
+          <p style={{ fontSize: '0.875rem', color: '#68737D', maxWidth: 460, margin: '0 auto 1.5rem' }}>
+            Inspect full chronological lifecycle logs, diagnostic recertifications, and second-life transitions.
+          </p>
+          <Link to={`/lifecycle?battery=${battery.battery_id}`} className="btn-primary">
+            <Award size={16} /> View Complete Lifecycle Timeline
+          </Link>
         </div>
       )}
 

@@ -1,6 +1,5 @@
 """BatteryX AI – Application Configuration"""
 import os
-import secrets
 import tempfile
 from pydantic_settings import BaseSettings
 
@@ -14,24 +13,25 @@ def _default_db_url() -> str:
 
 
 class Settings(BaseSettings):
-    # App
     APP_NAME: str = "BatteryX AI"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "3.0.0"
     DEBUG: bool = False
 
-    # Database – defaults to SQLite; override with DATABASE_URL env var for PostgreSQL
     DATABASE_URL: str = os.getenv("DATABASE_URL", _default_db_url())
 
-    # JWT
-    SECRET_KEY: str = secrets.token_urlsafe(32)
+    # Serverless-safe JWT key: Vercel may execute requests on different
+    # instances, so this must not be regenerated for every invocation.
+    # Set SECRET_KEY in Vercel for production; this fallback keeps the demo
+    # deployment functional when the environment variable is absent.
+    SECRET_KEY: str = os.getenv(
+        "SECRET_KEY",
+        "BatteryX-AI-demo-stable-secret-change-in-production-2026",
+    )
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
-    # CORS – comma-separated allowed origins
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,*"
-
-    # Certificate base URL (used to build QR code URLs)
-    BASE_URL: str = "http://localhost:5173"
+    BASE_URL: str = os.getenv("BASE_URL", "http://localhost:5173")
 
     class Config:
         env_file = ".env"

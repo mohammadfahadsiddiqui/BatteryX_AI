@@ -1,7 +1,5 @@
 // BatteryX AI – WebSocket Client Service
-// Provides automatic reconnection, heartbeat, and typed event callbacks.
-
-import type { WSMessage, WSEventType, LiveTelemetry, BatteryAlert } from '../types';
+import type { WSMessage, LiveTelemetry, BatteryAlert } from '../types';
 
 type TelemetryCallback = (data: LiveTelemetry) => void;
 type AlertCallback = (data: BatteryAlert) => void;
@@ -22,7 +20,6 @@ export class BatteryWebSocket {
   private _connected = false;
   private _destroyed = false;
 
-  // Callbacks
   onTelemetry?: TelemetryCallback;
   onAlert?: AlertCallback;
   onConnected?: ConnectionCallback;
@@ -35,13 +32,14 @@ export class BatteryWebSocket {
 
   connect(): void {
     if (this._destroyed) return;
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
+
     try {
-      const url = `${WS_BASE}/ws/${this.batteryId}`;
-      this.ws = new WebSocket(url);
+      this.ws = new WebSocket(`${WS_BASE}/ws/${encodeURIComponent(this.batteryId)}`);
 
       this.ws.onopen = () => {
         this._connected = true;
-        this.reconnectDelay = 1000;   // reset backoff
+        this.reconnectDelay = 1000;
         this._startHeartbeat();
         this.onConnected?.(this.batteryId);
       };
@@ -52,7 +50,7 @@ export class BatteryWebSocket {
           this.onMessage?.(msg);
           this._dispatch(msg);
         } catch {
-          // Ignore malformed messages
+          // Ignore malformed frames without terminating the stream.
         }
       };
 
@@ -60,18 +58,14 @@ export class BatteryWebSocket {
         this._connected = false;
         this._stopHeartbeat();
         this.onDisconnected?.(this.batteryId);
-        if (!this._destroyed) {
-          this._scheduleReconnect();
-        }
+        if (!this._destroyed) this._scheduleReconnect();
       };
 
       this.ws.onerror = () => {
-        this.ws?.close();
+        // onclose handles cleanup/reconnect.
       };
     } catch {
-      if (!this._destroyed) {
-        this._scheduleReconnect();
-      }
+      if (!this._destroyed) this._scheduleReconnect();
     }
   }
 
@@ -83,10 +77,14 @@ export class BatteryWebSocket {
       case 'critical_alert':
       case 'temperature_warning':
       case 'voltage_warning':
+      case 'current_warning':
+      case 'cell_imbalance_warning':
         if (msg.data) this.onAlert?.(msg.data as BatteryAlert);
         break;
       case 'pong':
-        break; // Heartbeat acknowledged
+        break;
+      default:
+        break;
     }
   }
 
@@ -107,19 +105,23 @@ export class BatteryWebSocket {
   }
 
   private _scheduleReconnect(): void {
-    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    if (this.reconnectTimeout || this._destroyed) return;
+    const delay = this.reconnectDelay;
+    this.reconnectDelay = Math.min(Math.round(this.reconnectDelay * 1.5), this.maxDelay);
     this.reconnectTimeout = setTimeout(() => {
-      this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, this.maxDelay);
+      this.reconnectTimeout = null;
       this.connect();
-    }, this.reconnectDelay);
+    }, delay);
   }
 
   disconnect(): void {
     this._destroyed = true;
     this._stopHeartbeat();
     if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    this.reconnectTimeout = null;
     this.ws?.close();
     this.ws = null;
+    this._connected = false;
   }
 
   get isConnected(): boolean {
@@ -127,10 +129,6 @@ export class BatteryWebSocket {
   }
 }
 
-/**
- * REST polling fallback — used when WebSocket connection is unavailable.
- * Polls /api/v1/telemetry/{battery_id}/latest on interval.
- */
 export function createTelemetryPoller(
   batteryId: string,
   onData: TelemetryCallback,
@@ -142,19 +140,19 @@ export function createTelemetryPoller(
   const poll = async () => {
     if (!active) return;
     try {
-      const res = await fetch(`/api/v1/telemetry/${batteryId}/latest`, {
+      const res = await fetch(`/api/v1/telemetry/${encodeURIComponent(batteryId)}/latest`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
         const data = await res.json();
-        if (data) onData(data);
+        if (data) onData(data as LiveTelemetry);
       }
     } catch {
-      // Silent failure — polling is best-effort
+      // Polling fallback is best-effort.
     }
   };
 
-  poll();
-  const id = setInterval(poll, intervalMs);
+  void poll();
+  const id = setInterval(() => { void poll(); }, intervalMs);
   return () => { active = false; clearInterval(id); };
 }

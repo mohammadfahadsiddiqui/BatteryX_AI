@@ -1,5 +1,4 @@
 // BatteryX AI – LiveChart component
-// Real-time animated time-series chart with windowing and pause/resume capability.
 import {
   ResponsiveContainer,
   LineChart,
@@ -18,8 +17,9 @@ export interface DataPoint {
 interface Props {
   data: DataPoint[];
   dataKey: string;
-  name: string;
-  unit: string;
+  name?: string;
+  label?: string;
+  unit?: string;
   color?: string;
   yDomain?: [number | 'auto', number | 'auto'];
   height?: number;
@@ -29,11 +29,14 @@ export function LiveChart({
   data,
   dataKey,
   name,
-  unit,
+  label,
+  unit = '',
   color = '#66CC99',
   yDomain = ['auto', 'auto'],
   height = 200,
 }: Props) {
+  const seriesName = name ?? label ?? dataKey;
+
   return (
     <div style={{ width: '100%', height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -53,7 +56,7 @@ export function LiveChart({
             tick={{ fontSize: 11, fill: '#8B949C' }}
             tickLine={false}
             axisLine={false}
-            tickFormatter={(v) => `${v}${unit ? ' ' + unit : ''}`}
+            tickFormatter={(value) => `${value}${unit ? ` ${unit}` : ''}`}
           />
           <Tooltip
             contentStyle={{
@@ -63,13 +66,13 @@ export function LiveChart({
               boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
               fontSize: '12px',
             }}
-            formatter={(value: any) => [`${value} ${unit}`, name]}
-            labelFormatter={(label) => `Time: ${label}`}
+            formatter={(value: number | string) => [`${value}${unit ? ` ${unit}` : ''}`, seriesName]}
+            labelFormatter={(value) => `Time: ${value}`}
           />
           <Line
             type="monotone"
             dataKey={dataKey}
-            name={name}
+            name={seriesName}
             stroke={color}
             strokeWidth={2}
             dot={false}

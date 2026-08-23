@@ -25,6 +25,7 @@ export function LiveMonitorPage() {
   const [isPaused, setIsPaused] = useState(false);
   const [latestPacket, setLatestPacket] = useState<LiveTelemetry | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<BatteryAlert[]>([]);
+  const [dataMode, setDataMode] = useState<'live' | 'manual' | 'demo' | 'waiting'>('waiting');
 
   const [voltageSeries, setVoltageSeries] = useState<DataPoint[]>([]);
   const [currentSeries, setCurrentSeries] = useState<DataPoint[]>([]);
@@ -60,12 +61,12 @@ export function LiveMonitorPage() {
     setSelectedBattery(found || null);
   }, [selectedBatteryId, batteries]);
 
-  const handleNewPacket = useCallback((pkt: LiveTelemetry) => {
+  const handleNewPacket = useCallback((pkt: LiveTelemetry, mode: 'live' | 'manual' | 'demo' = 'live') => {
     if (isPaused) return;
     setLatestPacket(pkt);
-    // A successful telemetry packet means the monitor is receiving live data,
-    // regardless of whether transport is WebSocket or HTTP polling.
-    if (!isDemoMode) setIsLiveConnected(true);
+    if (mode === 'live' && !isDemoMode) setIsLiveConnected(true);
+    setDataMode(mode);
+
     const timeStr = new Date(pkt.timestamp || Date.now()).toLocaleTimeString([], {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
@@ -80,6 +81,37 @@ export function LiveMonitorPage() {
     setPowerSeries(prev => pushPoint(prev, pkt.power_w, 'power'));
   }, [isPaused, isDemoMode]);
 
+  // Manual battery readings are the baseline when no ESP32 telemetry has
+  // arrived yet. This keeps the monitor useful with the existing manual
+  // battery-analysis workflow while clearly distinguishing it from live data.
+  const loadManualBaseline = useCallback(async (batteryId: string) => {
+    try {
+      const readings = await batteryApi.getReadings(batteryId);
+      const reading = readings?.[0];
+      if (!reading) return false;
+      const manualPacket: LiveTelemetry = {
+        id: reading.id,
+        battery_id: batteryId,
+        timestamp: reading.timestamp,
+        voltage_v: reading.voltage_v,
+        current_a: reading.current_a,
+        power_w: reading.voltage_v != null && reading.current_a != null
+          ? Number((reading.voltage_v * reading.current_a).toFixed(2))
+          : undefined,
+        temperature_c: reading.temperature_c,
+        soc_pct: reading.soc_pct,
+        internal_resistance_mohm: reading.internal_resistance_mohm,
+        source: reading.source || 'manual',
+        is_demo: false,
+      };
+      handleNewPacket(manualPacket, 'manual');
+      return true;
+    } catch (error) {
+      console.error('Manual battery baseline failed', error);
+      return false;
+    }
+  }, [handleNewPacket]);
+
   useEffect(() => {
     if (!selectedBatteryId) return;
 
@@ -90,6 +122,7 @@ export function LiveMonitorPage() {
     setPowerSeries([]);
     setLatestPacket(null);
     setActiveAlerts([]);
+    setDataMode('waiting');
     tickRef.current = 0;
     setIsLiveConnected(false);
 
@@ -107,11 +140,10 @@ export function LiveMonitorPage() {
     }
 
     if (isDemoMode) {
-      setIsLiveConnected(false);
       const runDemoTick = async () => {
         try {
           const pkt = await demoApi.getTelemetry(selectedBatteryId, demoScenario, tickRef.current++);
-          handleNewPacket(pkt);
+          handleNewPacket(pkt, 'demo');
         } catch (error) {
           console.error('Demo telemetry failed', error);
         }
@@ -125,15 +157,31 @@ export function LiveMonitorPage() {
     }
 
     // Vercel serverless deployments do not provide persistent WebSockets.
-    // Use the HTTP telemetry stream as the production live transport. A
-    // WebSocket is still supported automatically when explicitly enabled.
+    // Production therefore polls the telemetry API. If there is no live
+    // telemetry yet, fall back to the latest manually-entered battery reading.
     const useWebSocket = import.meta.env.VITE_ENABLE_WEBSOCKET === 'true';
 
+    const loadLatest = async () => {
+      try {
+        const pkt = await telemetryApi.getLatest(selectedBatteryId);
+        if (pkt) {
+          handleNewPacket(pkt, 'live');
+          return true;
+        }
+      } catch (error) {
+        console.error('Live telemetry request failed', error);
+      }
+      return loadManualBaseline(selectedBatteryId);
+    };
+
     if (!useWebSocket) {
-      pollStopRef.current = createTelemetryPoller(selectedBatteryId, handleNewPacket, 2000);
-      telemetryApi.getLatest(selectedBatteryId).then((pkt) => {
-        if (pkt) handleNewPacket(pkt);
-      }).catch(console.error);
+      pollStopRef.current = createTelemetryPoller(
+        selectedBatteryId,
+        (pkt) => handleNewPacket(pkt, 'live'),
+        2000,
+        async () => { await loadManualBaseline(selectedBatteryId); },
+      );
+      void loadLatest();
       return () => {
         if (pollStopRef.current) pollStopRef.current();
         pollStopRef.current = null;
@@ -146,23 +194,25 @@ export function LiveMonitorPage() {
     ws.onDisconnected = () => {
       setIsLiveConnected(false);
       if (!pollStopRef.current) {
-        pollStopRef.current = createTelemetryPoller(selectedBatteryId, handleNewPacket, 2000);
+        pollStopRef.current = createTelemetryPoller(
+          selectedBatteryId,
+          (pkt) => handleNewPacket(pkt, 'live'),
+          2000,
+          async () => { await loadManualBaseline(selectedBatteryId); },
+        );
       }
     };
-    ws.onTelemetry = handleNewPacket;
+    ws.onTelemetry = (pkt) => handleNewPacket(pkt, 'live');
     ws.onAlert = (alert) => setActiveAlerts(prev => [alert, ...prev].slice(0, 5));
     ws.connect();
-
-    telemetryApi.getLatest(selectedBatteryId).then((pkt) => {
-      if (pkt) handleNewPacket(pkt);
-    }).catch(console.error);
+    void loadLatest();
 
     return () => {
       ws.disconnect();
       if (pollStopRef.current) pollStopRef.current();
       pollStopRef.current = null;
     };
-  }, [selectedBatteryId, isDemoMode, demoScenario, handleNewPacket]);
+  }, [selectedBatteryId, isDemoMode, demoScenario, handleNewPacket, loadManualBaseline]);
 
   return (
     <div className="page-enter" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -206,6 +256,18 @@ export function LiveMonitorPage() {
         </div>
       )}
 
+      {!isDemoMode && dataMode === 'manual' && (
+        <div style={{ padding: '0.7rem 1rem', border: '1px solid #BFE8D4', background: '#F2FBF7', color: '#3F4A56', borderRadius: 8, fontSize: '0.82rem' }}>
+          Showing the latest manually recorded battery reading. Connect the ESP32/BMS to switch automatically to live telemetry.
+        </div>
+      )}
+
+      {!isDemoMode && dataMode === 'waiting' && (
+        <div style={{ padding: '0.7rem 1rem', border: '1px solid #F0D98A', background: '#FFFBEA', color: '#6B5B20', borderRadius: 8, fontSize: '0.82rem' }}>
+          Waiting for telemetry. Add a manual battery reading or connect an ESP32/BMS hardware node.
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: '0.875rem' }}>
         {([
           ['Voltage', latestPacket?.voltage_v != null ? `${latestPacket.voltage_v.toFixed(1)} V` : '—', Zap],
@@ -228,12 +290,12 @@ export function LiveMonitorPage() {
         <div>
           <div style={{ fontWeight: 700, color: '#3F4A56' }}>{selectedBattery?.battery_id || selectedBatteryId || 'No battery selected'}</div>
           <div style={{ color: '#68737D', fontSize: '0.8rem', marginTop: 3 }}>
-            Source: <DataSourceBadge source={latestPacket?.source || (isDemoMode ? 'demo' : 'esp32')} />
+            Source: <DataSourceBadge source={latestPacket?.source || (isDemoMode ? 'demo' : dataMode === 'manual' ? 'manual' : 'esp32')} />
             {' '}• Last update: {latestPacket?.timestamp ? new Date(latestPacket.timestamp).toLocaleTimeString() : '—'}
           </div>
         </div>
-        <div style={{ color: isLiveConnected ? '#4DBF88' : '#8B949C', fontWeight: 600, fontSize: '0.8rem' }}>
-          {isDemoMode ? 'SIMULATION' : isLiveConnected ? (import.meta.env.VITE_ENABLE_WEBSOCKET === 'true' ? 'LIVE CONNECTION' : 'LIVE POLLING') : 'WAITING FOR TELEMETRY'}
+        <div style={{ color: isLiveConnected ? '#4DBF88' : dataMode === 'manual' ? '#C99500' : '#8B949C', fontWeight: 600, fontSize: '0.8rem' }}>
+          {isDemoMode ? 'SIMULATION' : isLiveConnected ? (import.meta.env.VITE_ENABLE_WEBSOCKET === 'true' ? 'LIVE CONNECTION' : 'LIVE POLLING') : dataMode === 'manual' ? 'MANUAL BASELINE' : 'WAITING FOR TELEMETRY'}
         </div>
       </div>
 
